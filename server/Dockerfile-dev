@@ -1,0 +1,19 @@
+# Dev image za NestJS API. Samo za docker-compose u lokalnom razvoju.
+# Izvorni kod se montira kao volume, pa image nosi samo Node i zavisnosti.
+FROM node:24.22.1-alpine3.24
+
+WORKDIR /app
+RUN chown node:node /app
+USER node
+
+ENV NODE_ENV=development
+
+COPY --chown=node:node package.json package-lock.json* ./
+# Dok ne postoji package-lock.json, koristi se npm install.
+RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+
+EXPOSE 3000 9229
+
+# npm install pri pokretanju drži node_modules volume usklađen sa
+# package.json bez ponovnog build-a image-a.
+CMD ["sh", "-c", "npm install --no-audit --no-fund && npm run start:dev"]

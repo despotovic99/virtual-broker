@@ -1,0 +1,130 @@
+# Samo za lokalni razvoj. Produkcija ide preko Dockerfile-prod (pravi se kasnije).
+#
+# Pre prvog pokretanja: cp .env.example .env i promeniti lozinke.
+# Klijent (React + Vite) se ne pokreće u Docker-u, nego lokalno (cd client && npm run dev).
+# Svi servisi su u mreži "virtual-broker" i vide se po imenu servisa
+# (postgres, redis, minio, api). Portovi na hostu su vezani
+# samo za 127.0.0.1, pa servisi nisu dostupni sa drugih računara u mreži.
+name: virtual-broker
+
+services:
+  postgres:
+    image: postgres:18.6-alpine3.24
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Postaviti POSTGRES_USER u .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Postaviti POSTGRES_PASSWORD u .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Postaviti POSTGRES_DB u .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      # Od Postgres 18 image očekuje volume na /var/lib/postgresql
+      # (podaci su u podfolderu po verziji).
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - virtual-broker
+
+  redis:
+    image: redis:8.8.4-alpine3.23
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD:?Postaviti REDIS_PASSWORD u .env}
+    environment:
+      # redis-cli u healthcheck-u čita lozinku odavde.
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - virtual-broker
+
+  # Zvanični minio/minio image više nije dostupan na Docker Hub-u, pa
+  # koristimo besplatni Chainguard image. Image nema shell ni curl, pa nema
+  # healthcheck; API sam čeka da MinIO bude dostupan i pravi bucket.
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Postaviti MINIO_ROOT_USER u .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Postaviti MINIO_ROOT_PASSWORD u .env}
+    ports:
+      - "127.0.0.1:${MINIO_API_HOST_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - virtual-broker
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile-dev
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      # Klijent radi lokalno na ovom portu; zahtevi stižu preko Vite proxy-ja.
+      CORS_ORIGINS: http://localhost:${CLIENT_HOST_PORT:-5173}
+      TRUST_PROXY: 1
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+      DB_LOGGING: "false"
+      # API nikad sam ne pokreće migracije. Pokreće ih programer:
+      # cd server && npm run migration:run:dev
+      MIGRATIONS_RUN: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_FORCE_PATH_STYLE: "true"
+      # U dev-u API koristi root nalog MinIO-a. U produkciji poseban nalog sa
+      # pravima samo na bucket.
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET:?Postaviti S3_BUCKET u .env}
+      # Potpisivanje access tokena (JWT, HS256), najmanje 32 bajta.
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Postaviti JWT_ACCESS_SECRET u .env}
+      JWT_ACCESS_TTL_SECONDS: 600
+      REFRESH_TOKEN_TTL_DAYS: 7
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-3000}:3000"
+      - "127.0.0.1:${API_DEBUG_HOST_PORT:-9229}:9229"
+    volumes:
+      - ./server:/app
+      # node_modules ostaje iz kontejnera (Linux), ne sa hosta.
+      - api-node-modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    networks:
+      - virtual-broker
+
+networks:
+  virtual-broker:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  api-node-modules:

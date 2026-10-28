@@ -1,0 +1,21 @@
+/.mcp.json
+/specification/
+
+# Tajne
+.env
+.env.*
+!.env.example
+
+# Zavisnosti i build
+node_modules/
+dist/
+dist-migrations/
+coverage/
+*.tsbuildinfo
+
+# OS i editor
+.DS_Store
+/.idea/
+/docs/
+/MVP-IMPLEMENTACIJA.md
+/MVP-PREGLED.md

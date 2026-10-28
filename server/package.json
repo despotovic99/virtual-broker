@@ -1,0 +1,56 @@
+{
+  "name": "virtual-broker-server",
+  "version": "0.0.1",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:debug": "nest start --debug 0.0.0.0:9229 --watch",
+    "start:prod": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "lint": "oxlint -c oxlint.json src/",
+    "clean:migrations": "node -e \"require('node:fs').rmSync('dist-migrations', { recursive: true, force: true })\"",
+    "build:migrations": "npm run clean:migrations && nest build -p tsconfig.migrations.json",
+    "migration:generate": "node scripts/migration-generate.mjs",
+    "migration:run:dev": "npm run build:migrations && typeorm migration:run -d dist-migrations/database/data-source.js",
+    "migration:show:dev": "npm run build:migrations && typeorm migration:show -d dist-migrations/database/data-source.js",
+    "migration:revert:dev": "npm run build:migrations && typeorm migration:revert -d dist-migrations/database/data-source.js",
+    "migration:run": "typeorm migration:run -d dist/database/data-source.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1158.0",
+    "@nestjs/common": "^12.3.2",
+    "@nestjs/config": "^12.0.1",
+    "@nestjs/core": "^12.3.2",
+    "@nestjs/jwt": "^12.0.3",
+    "@nestjs/platform-express": "^12.3.2",
+    "@nestjs/typeorm": "^12.0.2",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "cookie-parser": "^1.4.7",
+    "helmet": "^8.3.0",
+    "ioredis": "^5.11.1",
+    "pg": "^8.23.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "typeorm": "^1.1.2"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^12.0.11",
+    "@nestjs/schematics": "^12.0.11",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.3.0",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "oxlint": "^1.90.0",
+    "source-map-support": "^0.5.21",
+    "typescript": "~6.0.3"
+  }
+}

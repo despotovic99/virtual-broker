@@ -1,0 +1,7 @@
+node_modules
+dist
+dist-migrations
+coverage
+*.tsbuildinfo
+.env
+.env.*
