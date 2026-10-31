@@ -1,8 +1,9 @@
-import { Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { PaginationQueryDto } from '../../common/pagination/pagination.js';
 import { Authenticated } from '../access/access.decorators.js';
 import type { AuthUser } from '../access/auth-user.js';
 import { CurrentUser } from '../access/current-user.decorator.js';
-import { NotificationsService, type NotificationResponse } from './notifications.service.js';
+import { NotificationsService, type NotificationListResponse } from './notifications.service.js';
 
 @Controller('notifications')
 export class NotificationsController {
@@ -10,8 +11,8 @@ export class NotificationsController {
 
   @Get()
   @Authenticated()
-  list(@CurrentUser() user: AuthUser): Promise<{ items: NotificationResponse[]; unread: number }> {
-    return this.notifications.listMine(user.id, 50);
+  list(@CurrentUser() user: AuthUser, @Query() query: PaginationQueryDto): Promise<NotificationListResponse> {
+    return this.notifications.listMine(user.id, query);
   }
 
   @Post('read-all')

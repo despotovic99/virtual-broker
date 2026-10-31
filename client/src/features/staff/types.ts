@@ -1,3 +1,4 @@
+import type { AuditEvent as SharedAuditEvent } from '../../ui/AuditTrail.tsx'
 // Tipovi odgovora servera za back-office (server/src/core/*). Ručno usklađeno.
 import type { MarketCode, Role } from '../../core/auth/capabilities.ts'
 import type { Localized } from '../../core/i18n/I18nContext.tsx'
@@ -252,13 +253,7 @@ export interface LegalTeam {
   createdAt: string
 }
 
-export interface AuditEvent {
-  id: string
+export interface AuditEvent extends SharedAuditEvent {
   market: MarketCode | null
   actorId: string | null
-  action: string
-  entityType: string
-  entityId: string | null
-  data: Record<string, unknown> | null
-  createdAt: string
 }

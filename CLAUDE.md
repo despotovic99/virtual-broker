@@ -7,23 +7,24 @@ Specifikacija je u `specification/`, istraživanja u `docs/`.
 ## 1. Baza i migracije
 
 - **Claude piše i menja samo entitete** (`*.entity.ts`). Migracije se nikad ne pišu ručno.
-- **Migracije se generišu** komandom `npm run migration:generate` (u `server/`). Terminal ispisuje `Enter migration name:` i čeka unos naziva u PascalCase-u (npr. `AddUsersTable`).
+- **Sve komande za migracije se pokreću iz `api` kontejnera** (`docker compose exec api npm run ...`, iz root-a projekta), nikad sa hosta.
+- **Migracije se generišu** komandom `docker compose exec api npm run migration:generate`. Terminal ispisuje `Enter migration name:` i čeka unos naziva u PascalCase-u (npr. `AddUsersTable`).
 - **Migracije pokreće isključivo korisnik. Claude NIKADA ne pokreće nijednu komandu za migracije**: `migration:generate`, `migration:run:dev`, `migration:show:dev`, `migration:revert:dev`, `migration:run`, niti `typeorm` CLI direktno. Isto važi za bilo koju komandu koja menja šemu ili podatke u bazi.
 - Posle izmene entiteta Claude samo napiše koje komande korisnik treba da pokrene i predloži naziv migracije, na primer:
-  `cd server && npm run migration:generate` (naziv: `AddUsersTable`), pa `npm run migration:run:dev`
+  `docker compose exec api npm run migration:generate` (naziv: `AddUsersTable`), pa `docker compose exec api npm run migration:run:dev`
 - Šema ide isključivo kroz migracije. `synchronize` je uvek isključen, a API sam ne pokreće migracije (`MIGRATIONS_RUN=false`).
 
-### Komande za migracije (u `server/`)
+### Komande za migracije (iz root-a, u `api` kontejneru)
 
 | Komanda | Šta radi |
 |---|---|
-| `npm run migration:generate` | Pita za naziv (`Enter migration name:`), briše `dist-migrations/`, pravi nov build i generiše migraciju u `src/database/migrations/` iz razlike entiteta i baze |
-| `npm run migration:run:dev` | Briše `dist-migrations/`, pravi nov build i pokreće migracije |
-| `npm run migration:show:dev` | Briše `dist-migrations/`, pravi nov build i prikazuje koje su migracije pokrenute |
-| `npm run migration:revert:dev` | Briše `dist-migrations/`, pravi nov build i vraća poslednju migraciju |
-| `npm run migration:run` | Pokreće migracije iz postojećeg `dist/` builda (za produkciju) |
+| `docker compose exec api npm run migration:generate` | Pita za naziv (`Enter migration name:`), briše `dist/`, pravi nov build i generiše migraciju u `src/database/migrations/` iz razlike entiteta i baze |
+| `docker compose exec api npm run migration:run:dev` | Briše `dist/`, pravi nov build i pokreće migracije |
+| `docker compose exec api npm run migration:show:dev` | Briše `dist/`, pravi nov build i prikazuje koje su migracije pokrenute |
+| `docker compose exec api npm run migration:revert:dev` | Briše `dist/`, pravi nov build i vraća poslednju migraciju |
+| `npm run migration:run` | Pokreće migracije iz postojećeg `dist/` builda, bez brisanja i build-a (za produkciju) |
 
-Build za migracije ide u `dist-migrations/`, odvojeno od `dist/` iz kog radi `nest start --watch` u kontejneru. Sa hosta komande čitaju root `.env` i spajaju se na bazu na `127.0.0.1`.
+Dev komande za migracije koriste isti `dist/` kao aplikacija: brišu ga i prave nov build (`npm run build:dev`). Na produkciji se `dist/` ne briše, `migration:run` radi nad postojećim produkcionim build-om. `server/` je montiran u kontejner kao `/app`, pa nova migracija odmah završi u `server/src/database/migrations/` na hostu. U kontejneru se baza zove `postgres` (DB_* promenljive iz `docker-compose.yml`); `data-source.ts` odbija da radi bez `DB_HOST`, pa komande ne rade sa hosta.
 
 ### Konekcije i transakcije (obavezno)
 
@@ -103,8 +104,10 @@ try {
 
 - Uloge: `SUPER_ADMIN`, `ADMIN`, `ANALYST`, `COORDINATOR`, `LAWYER`, `ENGINEER`, `ESCROW_AGENT`, `BUYER`, `INVESTOR` (`server/src/core/access/role.enum.ts`). Korisnik može imati više uloga (tabela `user_roles`).
 - **SUPER_ADMIN samo administrira sistem** (korisnici, tržišta, timovi) i ne odlučuje o predmetima (razdvajanje dužnosti). Operativne odluke donose ADMIN, ANALYST, COORDINATOR, LAWYER, ENGINEER i ESCROW_AGENT.
+- **ADMIN može sve na svojim tržištima:** ima sve capability osim samouslužnih radnji kupca (`requests:create`, `buyer-profile:manage`; lista se gradi iz enuma u `role-capabilities.ts`) i prolazi svaku proveru veze sa kupovinom (veza `ADMIN` u `PurchaseAccessService`, `require()` ga uvek pušta; ostala mesta koriste `isAdminOnMarket`). **Pravila četiri oka važe i za njega:** račun investitora ne potvrđuje onaj ko ga je uneo, a escrow isplatu odobravaju dva različita admina. Admina pravi i menja samo SUPER_ADMIN (`ROLE_CAN_ASSIGN`), a niko ne menja sopstvene uloge, tržišta i status.
+- **Jedan nalog može imati više uloga** (npr. ANALYST + COORDINATOR); prava su unija prava svih uloga. Nove uloge važe posle ponovne prijave (uloge su u JWT-u).
 - Uloge iz `MARKET_SCOPED_ROLES` rade samo na svojim tržištima (tabela `user_markets`, claim `markets` u JWT-u). Pristup kupovini proverava isključivo `PurchaseAccessService`: korisnik bez veze sa kupovinom dobija NOT_FOUND.
-- **SUPER_ADMIN se nikad ne pravi niti dodeljuje kroz API.** Super admina korisnik dodaje ručno u bazu. Heš lozinke za ručni upis daje `node tools/hash-password.mjs` (parametri moraju ostati isti kao u `password.service.ts`). Kroz API se dodeljuju samo `ASSIGNABLE_ROLES`, i to samo uloge koje akter sme po `ROLE_CAN_ASSIGN`.
+- **SUPER_ADMIN se nikad ne pravi niti dodeljuje kroz API.** Super admina korisnik dodaje ručno u bazu. Heš lozinke za ručni upis daje `docker compose exec api node /tools/hash-password.mjs` (parametri moraju ostati isti kao u `password.service.ts`). Kroz API se dodeljuju samo `ASSIGNABLE_ROLES`, i to samo uloge koje akter sme po `ROLE_CAN_ASSIGN`.
 - **Svaki endpoint mora imati tačno jednu oznaku pristupa:** `@Public()`, `@Authenticated()` ili `@RequireCapabilities(...)`. Ruta bez oznake se odbija, a API ne krene (`AccessAuditService`).
 - **Nova capability:** vrednost u `server/src/core/access/capability.enum.ts`, dodela ulogama u `role-capabilities.ts` (jedino mesto gde se vezuje uloga za capability) i ista vrednost u `client/src/core/auth/capabilities.ts`.
 - Prijava: access token je JWT (10 min, samo u memoriji klijenta, `Authorization: Bearer`). Refresh token (7 dana) je u `HttpOnly` cookie-ju na `/api/auth`, rotira se na svako osvežavanje, a u bazi je samo njegov SHA-256 heš.

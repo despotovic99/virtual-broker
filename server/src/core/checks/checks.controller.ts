@@ -7,6 +7,7 @@ import { CatalogBrowseService, type ProjectDetailResponse } from './catalog-brow
 import {
   ChecksAdminService,
   type CheckHistoryItem,
+  type CheckHistoryListResponse,
   type ProjectSemaphoreResponse,
   type SemaphoreResponse,
 } from './checks-admin.service.js';
@@ -42,7 +43,7 @@ export class ChecksController {
 
   @Get('checks/history')
   @RequireCapabilities(Capability.ChecksRead)
-  history(@CurrentUser() actor: AuthUser, @Query() query: CheckHistoryQueryDto): Promise<CheckHistoryItem[]> {
+  history(@CurrentUser() actor: AuthUser, @Query() query: CheckHistoryQueryDto): Promise<CheckHistoryListResponse> {
     return this.checks.history(actor, query);
   }
 

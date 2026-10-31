@@ -5,6 +5,7 @@ import { ApiError } from '../../common/errors/api-error.js';
 import { throwApiError } from '../../common/errors/throw-api-error.js';
 import type { EmailMessage } from '../../integrations/dummy/dummy-email.sender.js';
 import type { AuthUser } from '../access/auth-user.js';
+import { AuditService } from '../audit/audit.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import type { CreateMessageDto } from './dto/purchase.dto.js';
 import type { PurchaseMessageDto } from './dto/purchase-response.dto.js';
@@ -25,6 +26,7 @@ export class PurchaseMessagesService {
     private readonly purchases: PurchasesRepository,
     private readonly access: PurchaseAccessService,
     private readonly notifications: NotificationsService,
+    private readonly audit: AuditService,
   ) {}
 
   async list(actor: AuthUser, purchaseId: string): Promise<PurchaseMessageDto[]> {
@@ -66,6 +68,15 @@ export class PurchaseMessagesService {
         authorId: actor.id,
         body: dto.body.trim(),
         internal,
+      });
+      // Tekst poruke se ne upisuje u trag (vidi se samo u porukama, uz pravila vidljivosti).
+      await this.audit.record(manager, {
+        market: purchase.market,
+        actorId: actor.id,
+        action: 'purchase.message.created',
+        entityType: 'purchase_message',
+        entityId: message.id,
+        data: { purchaseId: purchase.id, internal, changes: { internal: { from: null, to: internal } } },
       });
 
       const recipients = new Set(

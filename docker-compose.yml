@@ -15,7 +15,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Postaviti POSTGRES_PASSWORD u .env}
       POSTGRES_DB: ${POSTGRES_DB:?Postaviti POSTGRES_DB u .env}
     ports:
-      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+      - "127.0.0.1:5532:5432"
     volumes:
       # Od Postgres 18 image očekuje volume na /var/lib/postgresql
       # (podaci su u podfolderu po verziji).
@@ -84,8 +84,8 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       DB_NAME: ${POSTGRES_DB}
       DB_LOGGING: "false"
-      # API nikad sam ne pokreće migracije. Pokreće ih programer:
-      # cd server && npm run migration:run:dev
+      # API nikad sam ne pokreće migracije. Pokreće ih programer iz kontejnera:
+      # docker compose exec api npm run migration:run:dev
       MIGRATIONS_RUN: "false"
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -107,6 +107,8 @@ services:
       - "127.0.0.1:${API_DEBUG_HOST_PORT:-9229}:9229"
     volumes:
       - ./server:/app
+      # Alati iz root-a (npr. docker compose exec api node /tools/hash-password.mjs).
+      - ./tools:/tools:ro
       # node_modules ostaje iz kontejnera (Linux), ne sa hosta.
       - api-node-modules:/app/node_modules
     depends_on:

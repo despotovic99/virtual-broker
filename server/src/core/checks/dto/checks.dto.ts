@@ -1,6 +1,6 @@
-import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Matches, Max, MaxLength, Min } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID, Length, Matches, MaxLength } from 'class-validator';
 import { SEMAPHORE_STATUSES, type Semaphore } from '../../../common/db/columns.js';
+import { PaginationQueryDto } from '../../../common/pagination/pagination.js';
 
 /** Cilj provere: tačno jedan od developerId i projectId (proverava servis). */
 export class CheckTargetDto {
@@ -32,11 +32,13 @@ export class ManualCheckDto extends CheckTargetDto {
   documentId?: string;
 }
 
-export class CheckHistoryQueryDto extends CheckTargetDto {
+/** Istorija provera: tačno jedan od developerId i projectId (proverava servis), uz paginaciju. */
+export class CheckHistoryQueryDto extends PaginationQueryDto {
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(200)
-  limit = 100;
+  @IsUUID()
+  developerId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  projectId?: string;
 }

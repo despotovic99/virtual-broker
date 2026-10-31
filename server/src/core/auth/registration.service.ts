@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { throwApiError } from '../../common/errors/throw-api-error.js';
 import { isUniqueViolation } from '../../common/utils/db-error.util.js';
+import { auditInitial } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
 import { PasswordService } from '../users/password.service.js';
 import { normalizeEmail, UsersService } from '../users/users.service.js';
@@ -66,7 +67,13 @@ export class RegistrationService {
           action: 'user.registered',
           entityType: 'user',
           entityId: userId,
-          data: { roles: ['BUYER'] },
+          data: {
+            roles: ['BUYER'],
+            changes: auditInitial(
+              { email, firstName: dto.firstName.trim(), lastName: dto.lastName.trim(), language: dto.language, roles: ['BUYER'] },
+              ['email', 'firstName', 'lastName', 'language', 'roles'],
+            ),
+          },
         });
         created = true;
       }

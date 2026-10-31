@@ -1,5 +1,6 @@
 import { CreateDateColumn, Entity, JoinColumn, ManyToOne, PrimaryColumn, type Relation } from 'typeorm';
-import { MARKET_CODES, type MarketCode } from '../../../markets/market-code.js';
+import { MarketColumn } from '../../../common/db/columns.js';
+import type { MarketCode } from '../../../markets/market-code.js';
 import { User } from './user.entity.js';
 
 /**
@@ -11,7 +12,7 @@ export class UserMarket {
   @PrimaryColumn({ name: 'user_id', type: 'uuid' })
   userId: string;
 
-  @PrimaryColumn({ type: 'enum', enum: [...MARKET_CODES], enumName: 'market' })
+  @MarketColumn({ primary: true })
   market: MarketCode;
 
   @ManyToOne(() => User, (user) => user.markets, { onDelete: 'CASCADE' })

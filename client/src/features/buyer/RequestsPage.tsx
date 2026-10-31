@@ -1,72 +1,77 @@
 import { Link } from 'react-router'
-import { api } from '../../core/api/http.ts'
+import { api, query } from '../../core/api/http.ts'
 import { useI18n, useLocalT } from '../../core/i18n/I18nContext.tsx'
-import { Empty, ErrorBox, Loading, Page, StatusBadge } from '../../ui/components.tsx'
-import { useAsync } from '../../ui/useAsync.ts'
+import { Page, StatusBadge, Tag } from '../../ui/components.tsx'
+import { DataTable, type Column } from '../../ui/DataTable.tsx'
+import { Icon } from '../../ui/icons.tsx'
+import { statusSignal } from '../../ui/status.ts'
+import { usePagedQuery } from '../../ui/usePagination.ts'
 import { buyerDictionary } from './i18n.ts'
-import type { BuyerRequestItem, RequestStatus } from './types.ts'
+import type { BuyerRequestItem, BuyerRequestPage } from './types.ts'
 
-export function statusTone(status: RequestStatus): 'neutral' | 'good' | 'warn' | 'bad' {
-  if (status === 'ANSWERED' || status === 'CONVERTED') return 'good'
-  if (status === 'CLOSED') return 'neutral'
-  return 'warn'
-}
-
-/** Moji zahtevi (F-35): vrsta, status, tržište, datum i rok za prvi odgovor. */
+/** Moji zahtevi (F-35): vrsta, status, tržište, datum i rok za prvi odgovor; tabela sa paginacijom. */
 export function RequestsPage() {
   const { t, formatDate } = useI18n()
   const bt = useLocalT(buyerDictionary)
-  const { data, error, loading } = useAsync(() => api<BuyerRequestItem[]>('/requests/mine'), [])
+  const list = usePagedQuery((page) => api<BuyerRequestPage>(`/requests/mine${query({ ...page })}`), [])
+
+  const newLink = (
+    <Link className="btn btn--primary" to="/requests/new">
+      <Icon name="plus" size={15} />
+      {bt('requests.new')}
+    </Link>
+  )
+
+  const columns: Column<BuyerRequestItem>[] = [
+    {
+      key: 'kind',
+      header: bt('requests.kind'),
+      cell: (request) => {
+        const target = request.developerName ?? request.address ?? request.registrationNumber
+        return (
+          <span className="cell-title">
+            <strong>{bt(`kind.${request.kind}`)}</strong>
+            {target && <span className="meta">{target}</span>}
+          </span>
+        )
+      },
+    },
+    {
+      key: 'status',
+      header: t('common.status'),
+      cell: (request) => <StatusBadge text={bt(`status.${request.status}`)} {...statusSignal('request', request.status)} />,
+    },
+    {
+      key: 'market',
+      header: t('common.market'),
+      hideOnMobile: true,
+      cell: (request) => <Tag tone="info">{t(`market.${request.market}`)}</Tag>,
+    },
+    { key: 'created', header: bt('requests.created'), mono: true, hideOnMobile: true, cell: (request) => formatDate(request.createdAt) },
+    { key: 'due', header: bt('requests.due'), mono: true, cell: (request) => formatDate(request.firstResponseDueAt) },
+  ]
+
+  // Kad nema nijednog zahteva, radnja je u praznom stanju (bez dupliranja u zaglavlju).
+  const isEmpty = list.data !== undefined && list.data.total === 0
 
   return (
-    <Page
-      title={bt('requests.title')}
-      actions={
-        <Link to="/requests/new">
-          <button type="button" className="primary">
-            {bt('requests.new')}
-          </button>
-        </Link>
-      }
-    >
-      <ErrorBox error={error} />
-      {loading && !data && <Loading />}
-      {data && data.length === 0 && <Empty text={bt('requests.empty')} />}
-      {data && data.length > 0 && (
-        <div className="card buyer-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{bt('requests.kind')}</th>
-                <th>{t('common.status')}</th>
-                <th>{t('common.market')}</th>
-                <th>{bt('requests.created')}</th>
-                <th>{bt('requests.due')}</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((request) => (
-                <tr key={request.id}>
-                  <td>
-                    <div>{bt(`kind.${request.kind}`)}</div>
-                    <div className="muted">{request.developerName ?? request.address ?? request.registrationNumber ?? ''}</div>
-                  </td>
-                  <td>
-                    <StatusBadge text={bt(`status.${request.status}`)} tone={statusTone(request.status)} />
-                  </td>
-                  <td>{t(`market.${request.market}`)}</td>
-                  <td>{formatDate(request.createdAt)}</td>
-                  <td>{formatDate(request.firstResponseDueAt)}</td>
-                  <td>
-                    <Link to={`/requests/${request.id}`}>{bt('requests.open')}</Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+    <Page title={bt('requests.title')} actions={isEmpty ? undefined : newLink}>
+      <DataTable
+        caption={bt('requests.title')}
+        columns={columns}
+        rows={list.rows}
+        rowKey={(request) => request.id}
+        loading={list.loading}
+        error={list.error}
+        onRetry={list.reload}
+        pagination={list.pagination}
+        empty={{ title: bt('requests.emptyTitle'), text: bt('requests.empty'), action: newLink, icon: 'doc' }}
+        rowActions={(request) => (
+          <Link className="btn btn--quiet btn--sm" to={`/requests/${request.id}`}>
+            {bt('requests.open')}
+          </Link>
+        )}
+      />
     </Page>
   )
 }

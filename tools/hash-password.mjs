@@ -2,7 +2,7 @@
 // Generiše heš lozinke za ručni upis u bazu (npr. za super admina).
 // Ne dira bazu, samo ispiše heš za kolonu users.password_hash.
 //
-// Upotreba (iz root-a projekta): node tools/hash-password.mjs
+// Upotreba (iz root-a projekta): docker compose exec api node /tools/hash-password.mjs
 //
 // Parametri MORAJU biti isti kao u server/src/core/users/password.service.ts.
 import { randomBytes, scryptSync } from 'node:crypto';

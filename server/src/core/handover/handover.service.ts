@@ -4,6 +4,7 @@ import { ApiErrorCode } from '../../common/errors/api-error-code.js';
 import { ApiError } from '../../common/errors/api-error.js';
 import { throwApiError } from '../../common/errors/throw-api-error.js';
 import type { AuthUser } from '../access/auth-user.js';
+import { auditChanges, auditInitial } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
 import { NotificationsService, type NotificationDraft } from '../notifications/notifications.service.js';
 import type { Purchase } from '../purchases/entities/purchase.entity.js';
@@ -132,7 +133,14 @@ export class HandoverService {
         action: 'handover.recorded',
         entityType: 'purchase',
         entityId: purchase.id,
-        data: { contractArea: dto.contractArea, measuredArea: dto.measuredArea, differencePercent: response.areaDifferencePercent },
+        data: {
+          purchaseId: purchase.id,
+          contractArea: dto.contractArea,
+          measuredArea: dto.measuredArea,
+          differencePercent: response.areaDifferencePercent,
+          // Prvi zapisnik: stare vrednosti su null; ispravka: staro → novo.
+          changes: auditChanges<Partial<Handover>>(existing ?? {}, data, ['engineerId', 'inspectedAt', 'contractArea', 'measuredArea', 'notes']),
+        },
       });
       const emails = await this.notifications.notify(
         queryRunner.manager,
@@ -174,7 +182,7 @@ export class HandoverService {
         action: 'handover.keys',
         entityType: 'purchase',
         entityId: purchase.id,
-        data: null,
+        data: { purchaseId: purchase.id, changes: auditChanges(handover, { keysHandedAt: now }, ['keysHandedAt']) },
       });
       const emails = await this.notifications.notify(
         queryRunner.manager,
@@ -219,7 +227,11 @@ export class HandoverService {
         action: 'defect.created',
         entityType: 'defect',
         entityId: defect.id,
-        data: { purchaseId: purchase.id, severity: dto.severity },
+        data: {
+          purchaseId: purchase.id,
+          severity: dto.severity,
+          changes: auditInitial(defect, ['description', 'severity', 'dueDate', 'status']),
+        },
       });
       const emails = await this.notifications.notify(
         queryRunner.manager,
@@ -270,7 +282,10 @@ export class HandoverService {
         action: dto.status === 'FIXED' ? 'defect.fixed' : 'defect.confirmed',
         entityType: 'defect',
         entityId: defect.id,
-        data: { purchaseId: purchase.id },
+        data: {
+          purchaseId: purchase.id,
+          changes: auditChanges(defect, updated, ['status', 'fixedAt', 'confirmedById', 'confirmedAt']),
+        },
       });
       const emails = await this.notifications.notify(
         queryRunner.manager,

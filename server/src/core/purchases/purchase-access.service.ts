@@ -4,15 +4,18 @@ import { ApiErrorCode } from '../../common/errors/api-error-code.js';
 import { ApiError } from '../../common/errors/api-error.js';
 import type { MarketCode } from '../../markets/market-code.js';
 import type { AuthUser } from '../access/auth-user.js';
-import { hasMarketAccess, hasRole, isInternalOnMarket } from '../access/market-access.js';
+import { hasMarketAccess, hasRole, isAdminOnMarket, isInternalOnMarket } from '../access/market-access.js';
 import { Role } from '../access/role.enum.js';
 import { LegalTeamsService } from '../legal/legal-teams.service.js';
 import type { LegalTeamRole } from '../legal/entities/legal-team-member.entity.js';
 import type { Purchase } from './entities/purchase.entity.js';
 import { PurchaseAccessRepository } from './purchase-access.repository.js';
 
-/** Kako je korisnik vezan za kupovinu. Jedan korisnik može imati više veza. */
-export type PurchaseRelation = 'BUYER' | 'COORDINATOR' | 'INTERNAL' | 'LAWYER' | 'ENGINEER' | 'ESCROW';
+/**
+ * Kako je korisnik vezan za kupovinu. Jedan korisnik može imati više veza.
+ * ADMIN: admin na tržištu kupovine, prolazi svaki `require`.
+ */
+export type PurchaseRelation = 'BUYER' | 'COORDINATOR' | 'INTERNAL' | 'LAWYER' | 'ENGINEER' | 'ESCROW' | 'ADMIN';
 
 export interface PurchaseAccess {
   purchase: Purchase;
@@ -44,9 +47,15 @@ export class PurchaseAccessService {
     return this.resolve(manager, purchase, actor);
   }
 
-  /** Baca FORBIDDEN ako korisnik nema nijednu od traženih veza sa kupovinom. */
+  /** Baca FORBIDDEN ako korisnik nema nijednu od traženih veza sa kupovinom. Admin na tržištu uvek prolazi. */
   require(access: PurchaseAccess, ...allowed: PurchaseRelation[]): void {
+    if (access.relations.has('ADMIN')) return;
     if (!allowed.some((relation) => access.relations.has(relation))) throw new ApiError(ApiErrorCode.Forbidden);
+  }
+
+  /** Da li je korisnik admin na tržištu kupovine. */
+  isAdmin(access: PurchaseAccess): boolean {
+    return access.relations.has('ADMIN');
   }
 
   /** Da li korisnik sme da vidi podatke o projektu (dokumenta projekta, izveštaji inženjera). */
@@ -66,6 +75,7 @@ export class PurchaseAccessService {
     if (purchase.buyerId === actor.id) relations.add('BUYER');
     if (purchase.coordinatorId === actor.id) relations.add('COORDINATOR');
     if (isInternalOnMarket(actor, purchase.market)) relations.add('INTERNAL');
+    if (isAdminOnMarket(actor, purchase.market)) relations.add('ADMIN');
     if (purchase.engineerId === actor.id && hasMarketAccess(actor, purchase.market)) relations.add('ENGINEER');
     if (purchase.escrowAgentId === actor.id && hasMarketAccess(actor, purchase.market)) relations.add('ESCROW');
     if (purchase.legalTeamId && hasRole(actor, Role.Lawyer) && hasMarketAccess(actor, purchase.market)) {

@@ -1,4 +1,5 @@
 // Oblici odgovora servera za ekrane kupca (server/src/core/requests, catalog, checks, costs).
+import type { Page } from '../../core/api/http.ts'
 import type { MarketCode } from '../../core/auth/capabilities.ts'
 import type { Localized } from '../../core/i18n/I18nContext.tsx'
 import type { SemaphoreStatus } from '../../ui/components.tsx'
@@ -91,12 +92,11 @@ export interface ProjectItem {
   updatedAt: string
 }
 
-export interface ProjectList {
-  items: ProjectItem[]
-  total: number
-  limit: number
-  offset: number
-}
+/** Strana kataloga projekata (GET /catalog/projects). */
+export type ProjectList = Page<ProjectItem>
+
+/** Strana mojih zahteva (GET /requests/mine). */
+export type BuyerRequestPage = Page<BuyerRequestItem>
 
 export interface UnitItem {
   id: string

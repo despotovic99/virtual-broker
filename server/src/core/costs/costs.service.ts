@@ -6,9 +6,10 @@ import type { MarketCode } from '../../markets/market-code.js';
 import type { BuyerProfileFacts, CostBreakdown, CostInput, LegalFinding, Localized } from '../../markets/market-pack.js';
 import { MarketRegistry } from '../../markets/market-registry.js';
 import type { AuthUser } from '../access/auth-user.js';
+import { auditChanges } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
 import type { BuyerProfile } from '../users/entities/buyer-profile.entity.js';
-import { BuyerProfileRepository } from './buyer-profile.repository.js';
+import { BuyerProfileRepository } from '../users/buyer-profile.repository.js';
 import type { CalculateCostsDto, PriceEstimateQueryDto, UpdateBuyerProfileDto } from './dto/costs.dto.js';
 
 export interface BuyerProfileResponse {
@@ -86,6 +87,7 @@ export class CostsService {
     await queryRunner.connect();
     await queryRunner.startTransaction();
     try {
+      const before = await this.profiles.find(queryRunner.manager, actor.id);
       const profile = await this.profiles.upsert(queryRunner.manager, {
         userId: actor.id,
         isFirstHome: dto.isFirstHome,
@@ -102,7 +104,19 @@ export class CostsService {
         action: 'buyer_profile.updated',
         entityType: 'buyer_profile',
         entityId: actor.id,
-        data: null,
+        data: {
+          userId: actor.id,
+          // Prvi unos profila: stare vrednosti su null.
+          changes: auditChanges<Partial<BuyerProfile>>(before ?? {}, profile, [
+            'isFirstHome',
+            'isEuCitizen',
+            'primaryResidence',
+            'financing',
+            'age',
+            'householdMembers',
+            'budget',
+          ]),
+        },
       });
       await queryRunner.commitTransaction();
       return toProfileResponse(profile);

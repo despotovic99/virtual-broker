@@ -10,3 +10,9 @@ export function administeredMarkets(actor: AuthUser): readonly MarketCode[] {
 export function isSuperAdmin(actor: AuthUser): boolean {
   return actor.roles.includes(Role.SuperAdmin);
 }
+
+/** Admin vidi korisnike sa bar jednim svojim tržištem i korisnike bez tržišta; super admin sve. */
+export function canSeeUser(actor: AuthUser, userMarkets: readonly MarketCode[]): boolean {
+  if (isSuperAdmin(actor)) return true;
+  return userMarkets.length === 0 || userMarkets.some((market) => actor.markets.includes(market));
+}

@@ -14,6 +14,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { PaginationQueryDto } from '../../../common/pagination/pagination.js';
 import { MARKET_CODES, type MarketCode } from '../../../markets/market-code.js';
 import { PROJECT_STATUSES, type ProjectStatus } from '../entities/project.entity.js';
 import { UNIT_STATUSES, type UnitStatus } from '../entities/unit.entity.js';
@@ -74,7 +75,7 @@ export class UpdateDeveloperDto {
   website?: string;
 }
 
-export class ListDevelopersQueryDto {
+export class ListDevelopersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn([...MARKET_CODES])
   market?: MarketCode;
@@ -179,7 +180,7 @@ export class UpdateProjectDto {
   status?: ProjectStatus;
 }
 
-export class ListProjectsQueryDto {
+export class ListProjectsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn([...MARKET_CODES])
   market?: MarketCode;
@@ -208,19 +209,6 @@ export class ListProjectsQueryDto {
   @Min(0)
   @Max(20)
   minRooms?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  limit = 50;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset = 0;
 }
 
 // ---- Stan ----

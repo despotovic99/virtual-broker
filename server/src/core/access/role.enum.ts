@@ -1,7 +1,10 @@
 export enum Role {
   /** Administracija sistema: korisnici, tržišta, podešavanja. Ne odlučuje o predmetima. */
   SuperAdmin = 'SUPER_ADMIN',
-  /** Back-office: partneri, pravni timovi, odobravanje instrukcija za isplatu (četiri oka). */
+  /**
+   * Može sve na svojim tržištima (sve capability osim samouslužnih radnji
+   * kupca i sve provere veze sa kupovinom). Pravila četiri oka važe i za njega.
+   */
   Admin = 'ADMIN',
   /** Provere investitora i projekata, semafor, trijaža zahteva. */
   Analyst = 'ANALYST',

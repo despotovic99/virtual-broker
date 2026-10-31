@@ -38,4 +38,4 @@ Svi servisi su u Docker mreži `virtual-broker`, pa API do njih dolazi po imenu 
 
 - `src/core/`: moduli jezgra, zajednički za oba tržišta.
 - `src/markets/`: paketi tržišta (`cy`, `rs`). Jezgro pita paket preko `MarketRegistry` i ne grana po kodu zemlje (specifikacija F-34).
-- `src/database/migrations/`: šema baze ide samo kroz migracije. Komande su u `CLAUDE.md` (odeljak 1): `npm run migration:generate` (pita za naziv), `npm run migration:run:dev`, `npm run migration:show:dev`.
+- `src/database/migrations/`: šema baze ide samo kroz migracije. Komande su u `CLAUDE.md` (odeljak 1): pokreću se iz kontejnera: `docker compose exec api npm run migration:generate` (pita za naziv), `docker compose exec api npm run migration:run:dev`, `docker compose exec api npm run migration:show:dev`.

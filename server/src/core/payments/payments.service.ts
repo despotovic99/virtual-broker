@@ -7,6 +7,7 @@ import type { MarketPack, PaymentConditionDefinition } from '../../markets/marke
 import { MarketRegistry } from '../../markets/market-registry.js';
 import type { AuthUser } from '../access/auth-user.js';
 import { Role } from '../access/role.enum.js';
+import { auditChanges, auditInitial } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import { DocumentsService } from '../documents/documents.service.js';
@@ -92,6 +93,13 @@ export class PaymentsService {
         .filter((field): field is string => field !== null);
       if (invalidPhases.length > 0) throw new ApiError(ApiErrorCode.ValidationFailed, { fields: invalidPhases });
 
+      // Plan mora da pokrije tačno cenu stana: ni manje (deo cene bez uslova) ni više.
+      const unit = await this.catalog.getUnit(queryRunner.manager, purchase.unitId);
+      const planTotal = dto.installments.reduce((sum, installment) => sum + installment.amount, 0);
+      if (planTotal !== Number(unit.price)) {
+        throw new ApiError(ApiErrorCode.PaymentPlanTotalMismatch, { planTotal, unitPrice: Number(unit.price) });
+      }
+
       const existing = await this.payments.listForPurchaseForUpdate(queryRunner.manager, purchase.id);
       if (existing.some((installment) => installment.status === 'PAID' || installment.status === 'RELEASED')) {
         throw new ApiError(ApiErrorCode.InvalidStateTransition);
@@ -120,7 +128,16 @@ export class PaymentsService {
         action: 'payments.plan.replaced',
         entityType: 'purchase',
         entityId: purchase.id,
-        data: { installments: dto.installments.length, total: dto.installments.reduce((sum, item) => sum + item.amount, 0) },
+        data: {
+          purchaseId: purchase.id,
+          installments: dto.installments.length,
+          total: planTotal,
+          changes: auditChanges(
+            { installments: existing.length, total: existing.reduce((sum, item) => sum + Number(item.amount), 0) },
+            { installments: dto.installments.length, total: planTotal },
+            ['installments', 'total'],
+          ),
+        },
       });
       const emails = await this.notifications.notify(queryRunner.manager, [
         {
@@ -173,19 +190,22 @@ export class PaymentsService {
       }
 
       const now = new Date();
-      await this.payments.markConditionMet(queryRunner.manager, condition.id, {
-        confirmedById: actor.id,
-        confirmedAt: now,
-        evidenceDocumentId: dto.evidenceDocumentId ?? null,
-        note: dto.note?.trim() || null,
-      });
+      const confirmation = { evidenceDocumentId: dto.evidenceDocumentId ?? null, note: dto.note?.trim() || null };
+      await this.payments.markConditionMet(queryRunner.manager, condition.id, { confirmedById: actor.id, confirmedAt: now, ...confirmation });
       await this.audit.record(queryRunner.manager, {
         market: purchase.market,
         actorId: actor.id,
         action: 'payments.condition.confirmed',
         entityType: 'installment',
         entityId: installment.id,
-        data: { purchaseId: purchase.id, condition: code },
+        data: {
+          purchaseId: purchase.id,
+          condition: code,
+          changes: {
+            [`condition.${code}`]: { from: condition.status, to: 'MET' },
+            ...auditInitial(confirmation, ['evidenceDocumentId', 'note']),
+          },
+        },
       });
 
       const updated = conditions.map((item) => (item.id === condition.id ? { ...item, status: 'MET' as const } : item));
@@ -281,7 +301,12 @@ export class PaymentsService {
         action: canConfirm ? 'payments.installment.paid' : 'payments.installment.reported',
         entityType: 'installment',
         entityId: installment.id,
-        data: { purchaseId: purchase.id, amount: installment.amount, moneyModel: pack.moneyModel },
+        data: {
+          purchaseId: purchase.id,
+          amount: installment.amount,
+          moneyModel: pack.moneyModel,
+          changes: auditChanges(installment, updated, ['status', 'paidAt', 'proofDocumentId']),
+        },
       });
       const emails = await this.notifications.notify(queryRunner.manager, drafts);
       const conditions = await this.payments.conditionsFor(queryRunner.manager, installment.id);
@@ -328,6 +353,20 @@ export class PaymentsService {
             evidenceDocumentId: null,
             note: 'Potvrđeno izveštajem inženjera o završenoj fazi.',
           });
+          await this.audit.record(manager, {
+            market: installment.market,
+            actorId,
+            action: 'payments.condition.confirmed',
+            entityType: 'installment',
+            entityId: installment.id,
+            data: {
+              purchaseId: installment.purchaseId,
+              projectId,
+              condition: condition.conditionCode,
+              automatic: true,
+              changes: { [`condition.${condition.conditionCode}`]: { from: condition.status, to: 'MET' } },
+            },
+          });
           updated.push({ ...condition, status: 'MET' });
         } else {
           updated.push(condition);
@@ -357,7 +396,7 @@ export class PaymentsService {
       action: 'payments.installment.unlocked',
       entityType: 'installment',
       entityId: installment.id,
-      data: { purchaseId },
+      data: { purchaseId, changes: { status: { from: installment.status, to: 'READY' } } },
     });
     return [
       {
@@ -371,6 +410,8 @@ export class PaymentsService {
   }
 
   private assertCanConfirm(actor: AuthUser, access: PurchaseAccess, definition: PaymentConditionDefinition): void {
+    // Admin na tržištu potvrđuje svaki uslov.
+    if (access.relations.has('ADMIN')) return;
     const allowed = definition.confirmerRoles.some((role) => {
       if (!actor.roles.includes(role)) return false;
       const relation = RELATION_FOR_CONFIRMER[role];

@@ -1,4 +1,4 @@
-import { api, query, upload } from '../../core/api/http.ts'
+import { api, query, upload, type Page, type PageParams } from '../../core/api/http.ts'
 import type {
   Defect,
   DocumentItem,
@@ -12,7 +12,7 @@ import type {
   PoaScope,
   PowerOfAttorney,
   PurchaseDetail,
-  PurchaseList,
+  PurchaseSummary,
   PurchaseMessage,
   PurchaseStatus,
   PurchaseTask,
@@ -38,10 +38,9 @@ export interface InstallmentInput {
 }
 
 export const purchasesApi = {
-  list: (params: { status?: PurchaseStatus | ''; limit?: number; offset?: number }) =>
-    api<PurchaseList>(`/purchases${query(params)}`),
+  list: (params: { status?: PurchaseStatus | '' } & PageParams) => api<Page<PurchaseSummary>>(`/purchases${query({ ...params })}`),
   detail: (id: string) => api<PurchaseDetail>(`/purchases/${id}`),
-  create: (body: { requestId?: string; buyerId?: string; unitId: string }) =>
+  create: (body: { requestId?: string; buyerId?: string; unitId?: string }) =>
     api<PurchaseDetail>('/purchases', { method: 'POST', body }),
   assign: (id: string, body: AssignmentsInput) => api<PurchaseDetail>(`/purchases/${id}/assignments`, { method: 'PATCH', body }),
   completeStep: (id: string, code: string, note?: string) =>
@@ -52,10 +51,10 @@ export const purchasesApi = {
   unblock: (id: string) => api<PurchaseDetail>(`/purchases/${id}/unblock`, { method: 'POST' }),
   cancel: (id: string) => api<PurchaseDetail>(`/purchases/${id}/cancel`, { method: 'POST' }),
 
-  tasks: (id: string) => api<PurchaseTask[]>(`/purchases/${id}/tasks`),
+  tasks: (id: string, page: PageParams) => api<Page<PurchaseTask>>(`/purchases/${id}/tasks${query({ ...page })}`),
   createTask: (id: string, body: { type: string; title: string; assigneeUserId: string; dueAt?: string }) =>
     api<PurchaseTask>(`/purchases/${id}/tasks`, { method: 'POST', body }),
-  myTasks: () => api<PurchaseTask[]>('/tasks/mine'),
+  myTasks: (page: PageParams) => api<Page<PurchaseTask>>(`/tasks/mine${query({ ...page })}`),
   updateTask: (taskId: string, body: { status: TaskStatus; waitingReason?: string; result?: string; documentId?: string }) =>
     api<PurchaseTask>(`/tasks/${taskId}`, { method: 'PATCH', body }),
 
@@ -63,8 +62,9 @@ export const purchasesApi = {
   sendMessage: (id: string, body: { body: string; internal?: boolean }) =>
     api<PurchaseMessage>(`/purchases/${id}/messages`, { method: 'POST', body }),
 
-  documents: (purchaseId: string) => api<DocumentItem[]>(`/documents${query({ purchaseId })}`),
-  reportDocuments: (projectId: string, reportId: string) => api<DocumentItem[]>(`/documents${query({ projectId, reportId })}`),
+  documents: (purchaseId: string, page: PageParams) => api<Page<DocumentItem>>(`/documents${query({ purchaseId, ...page })}`),
+  reportDocuments: (projectId: string, reportId: string, page: PageParams) =>
+    api<Page<DocumentItem>>(`/documents${query({ projectId, reportId, ...page })}`),
   uploadDocument: (purchaseId: string, typeCode: string, file: File) => {
     const form = new FormData()
     form.append('scope', 'PURCHASE')
@@ -92,7 +92,7 @@ export const purchasesApi = {
     api<Installment>(`/installments/${installmentId}/paid`, { method: 'POST', body: proofDocumentId ? { proofDocumentId } : {} }),
 
   construction: (projectId: string) => api<{ projectId: string; phases: ConstructionPhase[] }>(`/projects/${projectId}/construction`),
-  reports: (projectId: string) => api<EngineerReport[]>(`/projects/${projectId}/reports`),
+  reports: (projectId: string, page: PageParams) => api<Page<EngineerReport>>(`/projects/${projectId}/reports${query({ ...page })}`),
 
   handover: (id: string) => api<{ handover: Handover | null; defects: Defect[] }>(`/purchases/${id}/handover`),
   recordHandover: (id: string, body: { inspectedAt: string; contractArea: number; measuredArea: number; notes?: string }) =>
@@ -105,6 +105,28 @@ export const purchasesApi = {
 
   availableTeams: (market: string, developerId: string) =>
     api<AvailableTeam[]>(`/legal-teams/available${query({ market, developerId })}`),
+
+  /** Aktivni kupci po stranama, za otvaranje kupovine bez zahteva. */
+  buyers: (params: { search: string; limit: number; offset: number }) =>
+    api<Page<StaffMember>>(`/users/buyers${query({ search: params.search || undefined, limit: params.limit, offset: params.offset })}`),
+
+  /** Nov nalog kupca (uloga uvek samo BUYER), opciono sa profilom. */
+  createBuyer: (body: {
+    firstName: string
+    lastName: string
+    email: string
+    language: 'sr' | 'en'
+    password: string
+    profile?: {
+      isFirstHome: boolean
+      isEuCitizen: boolean
+      primaryResidence: boolean
+      financing: 'CASH' | 'MORTGAGE'
+      age?: number
+      householdMembers: number
+      budget?: number
+    }
+  }) => api<StaffMember>('/users/buyers', { method: 'POST', body }),
 
   staff: (role: 'COORDINATOR' | 'ENGINEER' | 'ESCROW_AGENT' | 'LAWYER', market: string) =>
     api<StaffMember[]>(`/users/staff${query({ role, market })}`),

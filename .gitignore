@@ -9,7 +9,6 @@
 # Zavisnosti i build
 node_modules/
 dist/
-dist-migrations/
 coverage/
 *.tsbuildinfo
 
@@ -19,3 +18,6 @@ coverage/
 /docs/
 /MVP-IMPLEMENTACIJA.md
 /MVP-PREGLED.md
+/TOK-PLATFORME.md
+/ENTITETI.md
+/E2E-ZAKLJUCCI.md

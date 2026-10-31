@@ -1,4 +1,5 @@
 import { IsIn, IsOptional, IsString, IsUUID, Matches, MaxLength } from 'class-validator';
+import { PaginationQueryDto } from '../../../common/pagination/pagination.js';
 
 /** Polja koja stižu uz fajl (multipart). Vlasnik je tačno jedan od id-eva, prema `scope`. */
 export class UploadDocumentDto {
@@ -23,7 +24,7 @@ export class UploadDocumentDto {
   typeCode: string;
 }
 
-export class ListDocumentsQueryDto {
+export class ListDocumentsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID()
   purchaseId?: string;

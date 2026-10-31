@@ -9,10 +9,12 @@ import { DataSource, type EntityManager } from 'typeorm';
 import { ApiErrorCode } from '../../common/errors/api-error-code.js';
 import { ApiError } from '../../common/errors/api-error.js';
 import { throwApiError } from '../../common/errors/throw-api-error.js';
+import { toPage, type Page, type PaginationQueryDto } from '../../common/pagination/pagination.js';
 import { MarketRegistry } from '../../markets/market-registry.js';
 import type { AuthUser } from '../access/auth-user.js';
 import { hasMarketAccess, hasRole } from '../access/market-access.js';
 import { Role } from '../access/role.enum.js';
+import { auditChanges, auditInitial } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import { NotificationsService, type NotificationDraft } from '../notifications/notifications.service.js';
@@ -36,6 +38,8 @@ export interface EscrowInstructionResponse {
   returnReason: string | null;
   createdAt: string;
 }
+
+export type EscrowInstructionListResponse = Page<EscrowInstructionResponse>;
 
 function toResponse(instruction: EscrowInstruction): EscrowInstructionResponse {
   const account = instruction.bankAccount;
@@ -67,7 +71,7 @@ export class EscrowService {
     private readonly audit: AuditService,
   ) {}
 
-  async list(actor: AuthUser): Promise<EscrowInstructionResponse[]> {
+  async list(actor: AuthUser, query: PaginationQueryDto): Promise<EscrowInstructionListResponse> {
     const internal = hasRole(actor, Role.Admin, Role.Analyst, Role.Coordinator);
     const agent = hasRole(actor, Role.EscrowAgent);
     if (!internal && !agent) throw new ApiError(ApiErrorCode.Forbidden);
@@ -75,11 +79,12 @@ export class EscrowService {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     try {
-      const instructions = await this.escrow.list(
+      const [instructions, total] = await this.escrow.list(
         queryRunner.manager,
         internal ? { markets: actor.markets } : { escrowAgentId: actor.id },
+        query,
       );
-      return instructions.map(toResponse);
+      return toPage(instructions.map(toResponse), total, query);
     } catch (error) {
       throwApiError(error);
     } finally {
@@ -101,11 +106,14 @@ export class EscrowService {
 
       const now = new Date();
       const drafts: NotificationDraft[] = [];
+      let patch: Partial<EscrowInstruction>;
       if (!instruction.firstApproverId) {
-        await this.escrow.update(queryRunner.manager, id, { firstApproverId: actor.id, firstApprovedAt: now });
+        patch = { firstApproverId: actor.id, firstApprovedAt: now };
+        await this.escrow.update(queryRunner.manager, id, patch);
       } else {
         if (instruction.firstApproverId === actor.id) throw new ApiError(ApiErrorCode.EscrowSameApprover);
-        await this.escrow.update(queryRunner.manager, id, { secondApproverId: actor.id, secondApprovedAt: now, status: 'APPROVED' });
+        patch = { secondApproverId: actor.id, secondApprovedAt: now, status: 'APPROVED' };
+        await this.escrow.update(queryRunner.manager, id, patch);
         const { purchase } = await this.purchaseAccess.get(queryRunner.manager, instruction.purchaseId, actor);
         if (purchase.escrowAgentId) {
           drafts.push({
@@ -123,7 +131,17 @@ export class EscrowService {
         action: instruction.firstApproverId ? 'escrow.instruction.approved' : 'escrow.instruction.first-approval',
         entityType: 'escrow_instruction',
         entityId: id,
-        data: { purchaseId: instruction.purchaseId, amount: instruction.amount },
+        data: {
+          purchaseId: instruction.purchaseId,
+          amount: instruction.amount,
+          changes: auditChanges(instruction, patch, [
+            'status',
+            'firstApproverId',
+            'firstApprovedAt',
+            'secondApproverId',
+            'secondApprovedAt',
+          ]),
+        },
       });
       const emails = await this.notifications.notify(queryRunner.manager, drafts);
       const fresh = await this.escrow.findWithAccount(queryRunner.manager, id);
@@ -155,6 +173,7 @@ export class EscrowService {
     this.assertEscrowMarket(installment.market);
     const account = await this.catalog.findLatestVerifiedAccount(manager, developerId);
     if (!account) throw new ApiError(ApiErrorCode.BankAccountNotVerified);
+    const values = { installmentId: installment.id, amount: installment.amount, bankAccountId: account.id, status: 'PENDING_APPROVAL' };
     const id = await this.escrow.insert(manager, {
       market: installment.market,
       installmentId: installment.id,
@@ -169,7 +188,13 @@ export class EscrowService {
       action: 'escrow.instruction.created',
       entityType: 'escrow_instruction',
       entityId: id,
-      data: { purchaseId: installment.purchaseId, amount: installment.amount },
+      data: {
+        purchaseId: installment.purchaseId,
+        developerId,
+        amount: installment.amount,
+        ibanLast4: account.iban.slice(-4),
+        changes: auditInitial(values, ['installmentId', 'amount', 'bankAccountId', 'status']),
+      },
     });
     return id;
   }
@@ -196,11 +221,25 @@ export class EscrowService {
       const now = new Date();
       const { purchase } = access;
       const drafts: NotificationDraft[] = [];
+      let patch: Partial<EscrowInstruction>;
       if (status === 'EXECUTED') {
-        await this.escrow.update(queryRunner.manager, id, { status, executedById: actor.id, executedAt: now });
+        patch = { status, executedById: actor.id, executedAt: now };
+        await this.escrow.update(queryRunner.manager, id, patch);
         const installment = await this.payments.findForUpdate(queryRunner.manager, instruction.installmentId);
         if (!installment || installment.status !== 'PAID') throw new ApiError(ApiErrorCode.InvalidStateTransition);
         await this.payments.updateInstallment(queryRunner.manager, installment.id, { status: 'RELEASED' });
+        await this.audit.record(queryRunner.manager, {
+          market: installment.market,
+          actorId: actor.id,
+          action: 'payments.installment.released',
+          entityType: 'installment',
+          entityId: installment.id,
+          data: {
+            purchaseId: installment.purchaseId,
+            escrowInstructionId: id,
+            changes: { status: { from: installment.status, to: 'RELEASED' } },
+          },
+        });
         drafts.push({
           userId: purchase.buyerId,
           type: 'escrow.instruction.executed',
@@ -209,7 +248,8 @@ export class EscrowService {
           link: `/purchases/${purchase.id}`,
         });
       } else {
-        await this.escrow.update(queryRunner.manager, id, { status, returnReason: reason });
+        patch = { status, returnReason: reason };
+        await this.escrow.update(queryRunner.manager, id, patch);
       }
       if (purchase.coordinatorId) {
         drafts.push({
@@ -226,7 +266,11 @@ export class EscrowService {
         action: status === 'EXECUTED' ? 'escrow.instruction.executed' : 'escrow.instruction.returned',
         entityType: 'escrow_instruction',
         entityId: id,
-        data: { purchaseId: instruction.purchaseId, amount: instruction.amount },
+        data: {
+          purchaseId: instruction.purchaseId,
+          amount: instruction.amount,
+          changes: auditChanges(instruction, patch, ['status', 'executedById', 'executedAt', 'returnReason']),
+        },
       });
       const emails = await this.notifications.notify(queryRunner.manager, drafts);
       const fresh = await this.escrow.findWithAccount(queryRunner.manager, id);

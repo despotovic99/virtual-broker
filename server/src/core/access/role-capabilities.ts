@@ -6,24 +6,27 @@ import { ASSIGNABLE_ROLES, Role, type AssignableRole } from './role.enum.js';
  * ima uniju capability svih svojih uloga.
  *
  * Razdvajanje dužnosti: SUPER_ADMIN samo administrira sistem i ne odlučuje
- * o predmetima (ne potvrđuje uslove, faze ni isplate).
+ * o predmetima (ne potvrđuje uslove, faze ni isplate). ADMIN može sve na
+ * svojim tržištima, uz pravila četiri oka.
  */
+/**
+ * Samouslužne radnje kupca: zahtev i profil uvek idu u ime prijavljenog
+ * korisnika (actor.id), pa ih admin ne dobija automatski.
+ */
+const BUYER_SELF_SERVICE: readonly C[] = [C.RequestsCreate, C.BuyerProfileManage];
+
+/**
+ * ADMIN može sve osim samouslužnih radnji kupca. Lista se gradi iz enuma,
+ * pa nova capability automatski važi i za admina. Na svojim tržištima admin
+ * prolazi i provere veze sa kupovinom (veza ADMIN u PurchaseAccessService);
+ * pravila četiri oka (račun investitora, dva escrow potpisa) važe i za njega.
+ */
+const ADMIN_CAPABILITIES: readonly C[] = Object.values(C).filter((capability) => !BUYER_SELF_SERVICE.includes(capability));
+
 export const ROLE_CAPABILITIES: Readonly<Record<Role, readonly C[]>> = {
   [Role.SuperAdmin]: [C.UsersRead, C.UsersCreate, C.UsersUpdate, C.LegalTeamsManage, C.AuditRead, C.CatalogRead],
 
-  [Role.Admin]: [
-    C.UsersRead,
-    C.UsersCreate,
-    C.UsersUpdate,
-    C.LegalTeamsManage,
-    C.AuditRead,
-    C.CatalogRead,
-    C.ChecksRead,
-    C.PurchasesRead,
-    C.PaymentsRead,
-    C.EscrowInstructionsApprove,
-    C.ConstructionRead,
-  ],
+  [Role.Admin]: ADMIN_CAPABILITIES,
 
   [Role.Analyst]: [
     C.CatalogRead,
@@ -38,6 +41,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<Role, readonly C[]>> = {
     C.ConstructionRead,
     C.DocumentsUpload,
     C.MessagesWrite,
+    C.PurchaseStepsComplete,
   ],
 
   [Role.Coordinator]: [
@@ -86,6 +90,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<Role, readonly C[]>> = {
     C.ConstructionReport,
     C.HandoverManage,
     C.DefectsManage,
+    C.PurchaseStepsComplete,
   ],
 
   [Role.EscrowAgent]: [C.PurchasesRead, C.PaymentsRead, C.EscrowExecute],
@@ -104,6 +109,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<Role, readonly C[]>> = {
     C.PaymentsRecord,
     C.ConstructionRead,
     C.DefectsManage,
+    C.PurchaseStepsComplete,
   ],
 
   // Faza 2 (portal investitora). U MVP-u investitor nema ekrane.

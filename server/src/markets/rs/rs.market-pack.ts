@@ -46,8 +46,8 @@ export const rsMarketPack: MarketPack = {
 
   checks: [
     // Investitor (F-05)
-    { code: 'RS_APR_STATUS', subject: 'DEVELOPER', title: { sr: 'Status firme u APR-u', en: 'Company status (APR)' }, mandatory: true, method: 'AUTOMATIC', validityDays: 7, integration: IntegrationKey.RsAprCompany, inFreeSemaphore: true },
-    { code: 'RS_NBS_BLOCKADE', subject: 'DEVELOPER', title: { sr: 'Blokada računa (NBS)', en: 'Account blockade (NBS)' }, mandatory: true, method: 'AUTOMATIC', validityDays: 1, integration: IntegrationKey.RsNbsBlockade, inFreeSemaphore: true },
+    { code: 'RS_APR_STATUS', subject: 'DEVELOPER', title: { sr: 'Status firme u APR-u', en: 'Company status (APR)' }, mandatory: true, method: 'AUTOMATIC', validityDays: 7, integration: IntegrationKey.RsAprCompany, inFreeSemaphore: true, hardBlockOnRed: true },
+    { code: 'RS_NBS_BLOCKADE', subject: 'DEVELOPER', title: { sr: 'Blokada računa (NBS)', en: 'Account blockade (NBS)' }, mandatory: true, method: 'AUTOMATIC', validityDays: 1, integration: IntegrationKey.RsNbsBlockade, inFreeSemaphore: true, hardBlockOnRed: true },
     { code: 'RS_TAX_DEBT', subject: 'DEVELOPER', title: { sr: 'Spisak poreskih dužnika', en: 'Tax debtors list' }, mandatory: false, method: 'AUTOMATIC', validityDays: 365, integration: IntegrationKey.RsTaxDebtors, inFreeSemaphore: true },
     { code: 'RS_FINANCIALS', subject: 'DEVELOPER', title: { sr: 'Finansijski izveštaji', en: 'Financial statements' }, mandatory: false, method: 'MANUAL', validityDays: 365, inFreeSemaphore: false },
     { code: 'RS_COURT_CASES', subject: 'DEVELOPER', title: { sr: 'Sudski sporovi i izvršenja', en: 'Court cases and enforcement' }, mandatory: false, method: 'LAWYER', validityDays: 90, inFreeSemaphore: false },

@@ -1,0 +1,209 @@
+/*
+ * Dizajn sistem „Dosije”: tokeni (boje, tipografija, prostor, sloj, pokret).
+ * Travertinski kamen, mastilo boje ponoći i tanka linija mesinga.
+ * Signal uvek nosi oblik i reč, boja ga samo pojačava.
+ *
+ * Teme: svetla (podrazumevana) i tamna, kroz atribut data-theme na <html>
+ * (postavlja ga core/theme po izboru korisnika ili po sistemu). Štampa je
+ * uvek svetla, jer je tamna tema samo za ekran.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Kamen i mastilo */
+  --canvas: #edeae4;
+  --surface: #fbfaf8;
+  --sunken: #f5f2ed;
+  --raised: #fbfaf8;
+  --border: #d5cfc4;
+  --border-soft: #e4dfd7;
+  --border-strong: #b3aa9c;
+  --ink: #1a1a17;
+  --ink-2: #4a463f;
+  --ink-3: #6e6960;
+  --ink-disabled: #8c8579;
+  --ink-faint: #a8a093;
+  --on-fill: #fbfaf8;
+
+  /* Akcent (ponoć) */
+  --accent: #1b3a5c;
+  --accent-hover: #15314e;
+  --accent-press: #122a45;
+  --accent-ink: #122a45;
+  --accent-deep: #0e2237;
+  --accent-tint: #e6ebf2;
+  --accent-tint-2: #d3deea;
+  --accent-line: #afbfd4;
+  --accent-line-2: #c3d0e0;
+  --accent-wash: #f2f5f9;
+  --link: #1b3a5c;
+  --link-hover: #122a45;
+
+  /* Mesing: samo detalj */
+  --brass: #9c7a34;
+  --brass-ink: #7d5f22;
+  --brass-mark: #c9a464;
+
+  /* Signal */
+  --ok: #2e6b4f;
+  --ok-tint: #e6efe8;
+  --ok-line: #a9c7b4;
+
+  --warn: #9a5518;
+  --warn-ink: #7e4514;
+  --warn-tint: #faebdd;
+  --warn-tint-2: #f2dcc2;
+  --warn-line: #e0b389;
+  --warn-line-2: #c08a4e;
+  --warn-divider: #f0e0cc;
+  --warn-bar: #c8803a;
+
+  --risk: #8e1f2f;
+  --risk-ink: #731a28;
+  --risk-press: #751827;
+  --risk-tint: #f7e3e4;
+  --risk-tint-2: #f2d2d5;
+  --risk-line: #dea9ae;
+  --risk-row: #fbf2f2;
+  --risk-fill: #8e1f2f;
+  --risk-fill-line: #8e1f2f;
+  --risk-on-fill: #f2d2d5;
+
+  --idle: #6b655b;
+  --idle-tint: #edeae4;
+  --idle-line: #cbc5b9;
+
+  --info: #1b3a5c;
+  --info-tint: #e6ebf2;
+  --info-line: #afbfd4;
+
+  --test: #6b3a66;
+  --test-tint: #f0e7ef;
+  --test-line: #c9afc6;
+
+  /* Skelet */
+  --skeleton-1: #e4dfd7;
+  --skeleton-2: #e9e4dc;
+  --skeleton-3: #edeae4;
+
+  /* Fokus i polja */
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px rgba(27, 58, 92, 0.45);
+  --focus-ring-risk: 0 0 0 2px var(--surface), 0 0 0 4px rgba(142, 31, 47, 0.4);
+  --input-focus: 0 0 0 3px rgba(27, 58, 92, 0.18);
+  --input-invalid: 0 0 0 3px rgba(142, 31, 47, 0.14);
+  --press-inset: inset 0 2px 4px rgba(26, 22, 16, 0.13);
+  --press-inset-accent: inset 0 2px 4px rgba(8, 20, 34, 0.4);
+
+  /* Sloj */
+  --shadow-1: 0 1px 2px rgba(26, 22, 16, 0.07);
+  --shadow-2: 0 4px 12px rgba(26, 22, 16, 0.1);
+  --shadow-3: 0 12px 32px rgba(26, 22, 16, 0.17);
+
+  /* Tipografija */
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Radijus */
+  --r-0: 0;
+  --r-4: 4px;
+  --r-6: 6px;
+  --r-8: 8px;
+  --r-10: 10px;
+  --r-14: 14px;
+  --r-pill: 999px;
+
+  /* Pokret */
+  --t-control: 120ms;
+  --t-surface: 200ms;
+  --t-layer: 320ms;
+}
+
+/* Tamna tema nije invertovana svetla: signal je posvetljen, tintovi potamnjeni,
+   a nivo nosi svetlina površine umesto senke. */
+@media screen {
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+    --canvas: #14120f;
+    --surface: #1c1a16;
+    --sunken: #171410;
+    --raised: #241f1a;
+    --border: #36312a;
+    --border-soft: #282420;
+    --border-strong: #514a40;
+    --ink: #f0ede6;
+    --ink-2: #c8c2b6;
+    --ink-3: #9a9385;
+    --ink-disabled: #817a6c;
+    --ink-faint: #6e675b;
+    --on-fill: #fbfaf8;
+
+    --accent: #2b5486;
+    --accent-hover: #335f95;
+    --accent-press: #234a78;
+    --accent-ink: #9cb8de;
+    --accent-deep: #c2d5ec;
+    --accent-tint: #16233a;
+    --accent-tint-2: #1d2d48;
+    --accent-line: #2c3f5e;
+    --accent-line-2: #2c3f5e;
+    --accent-wash: #16233a;
+    --link: #9cb8de;
+    --link-hover: #c2d5ec;
+
+    --brass: #c9a464;
+    --brass-ink: #c9a464;
+    --brass-mark: #c9a464;
+
+    --ok: #5fbe8e;
+    --ok-tint: #132a20;
+    --ok-line: #275041;
+
+    --warn: #de9a4e;
+    --warn-ink: #efd2a8;
+    --warn-tint: #2c2010;
+    --warn-tint-2: #3e2c14;
+    --warn-line: #5c4419;
+    --warn-line-2: #5c4419;
+    --warn-divider: #3e2c14;
+    --warn-bar: #de9a4e;
+
+    --risk: #f0808f;
+    --risk-ink: #f6b3bc;
+    --risk-press: #f6b3bc;
+    --risk-tint: #2e1519;
+    --risk-tint-2: #3d1a20;
+    --risk-line: #5e242c;
+    --risk-row: #241316;
+    --risk-fill: #731a28;
+    --risk-fill-line: #8e1f2f;
+    --risk-on-fill: #f2d2d5;
+
+    --idle: #a09888;
+    --idle-tint: #211e19;
+    --idle-line: #3a352d;
+
+    --info: #9cb8de;
+    --info-tint: #16233a;
+    --info-line: #2c3f5e;
+
+    --test: #c79bc2;
+    --test-tint: #261a26;
+    --test-line: #45304a;
+
+    --skeleton-1: #2b2721;
+    --skeleton-2: #26221d;
+    --skeleton-3: #211e19;
+
+    --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px rgba(156, 184, 222, 0.6);
+    --focus-ring-risk: 0 0 0 2px var(--surface), 0 0 0 4px rgba(240, 128, 143, 0.5);
+    --input-focus: 0 0 0 3px rgba(156, 184, 222, 0.24);
+    --input-invalid: 0 0 0 3px rgba(240, 128, 143, 0.2);
+    --press-inset: inset 0 2px 4px rgba(0, 0, 0, 0.35);
+    --press-inset-accent: inset 0 2px 4px rgba(0, 0, 0, 0.45);
+
+    --shadow-1: none;
+    --shadow-2: none;
+    --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.45);
+  }
+}

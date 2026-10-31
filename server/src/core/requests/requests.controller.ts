@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { PaginationQueryDto } from '../../common/pagination/pagination.js';
 import { Authenticated, RequireCapabilities } from '../access/access.decorators.js';
 import type { AuthUser } from '../access/auth-user.js';
 import { Capability } from '../access/capability.enum.js';
@@ -11,7 +12,7 @@ import {
   LinkRequestDto,
   RequestQueueQueryDto,
 } from './dto/requests.dto.js';
-import { RequestsAppService } from './requests-app.service.js';
+import { RequestsAppService, type RequestListResponse } from './requests-app.service.js';
 import type { RequestResponse } from './requests.mapper.js';
 
 @Controller('requests')
@@ -27,20 +28,20 @@ export class RequestsController {
 
   @Get('mine')
   @RequireCapabilities(Capability.RequestsCreate)
-  mine(@CurrentUser() actor: AuthUser): Promise<RequestResponse[]> {
-    return this.requests.listMine(actor);
+  mine(@CurrentUser() actor: AuthUser, @Query() query: PaginationQueryDto): Promise<RequestListResponse> {
+    return this.requests.listMine(actor, query);
   }
 
   @Get('queue')
   @RequireCapabilities(Capability.RequestsTriage)
-  queue(@CurrentUser() actor: AuthUser, @Query() query: RequestQueueQueryDto): Promise<RequestResponse[]> {
+  queue(@CurrentUser() actor: AuthUser, @Query() query: RequestQueueQueryDto): Promise<RequestListResponse> {
     return this.requests.queue(actor, query);
   }
 
   @Get('legal-queue')
   @RequireCapabilities(Capability.RequestsAnswerLegal)
-  legalQueue(@CurrentUser() actor: AuthUser): Promise<RequestResponse[]> {
-    return this.requests.legalQueue(actor);
+  legalQueue(@CurrentUser() actor: AuthUser, @Query() query: PaginationQueryDto): Promise<RequestListResponse> {
+    return this.requests.legalQueue(actor, query);
   }
 
   /** Kupac vidi svoj zahtev, tim i pravni tim vide zahteve sa svog tržišta (proverava servis). */

@@ -44,9 +44,12 @@ export class ConstructionRepository {
     return manager.getRepository(EngineerReport).findOne({ where: { id } });
   }
 
-  listReports(manager: EntityManager, projectId: string): Promise<EngineerReport[]> {
-    return manager
-      .getRepository(EngineerReport)
-      .find({ where: { projectId }, order: { visitDate: 'DESC', createdAt: 'DESC' }, take: 200 });
+  listReports(manager: EntityManager, projectId: string, page: { limit: number; offset: number }): Promise<[EngineerReport[], number]> {
+    return manager.getRepository(EngineerReport).findAndCount({
+      where: { projectId },
+      order: { visitDate: 'DESC', createdAt: 'DESC', id: 'ASC' },
+      take: page.limit,
+      skip: page.offset,
+    });
   }
 }

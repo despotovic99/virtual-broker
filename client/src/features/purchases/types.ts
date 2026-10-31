@@ -3,7 +3,8 @@ import type { MarketCode, Role } from '../../core/auth/capabilities.ts'
 import type { Localized } from '../../core/i18n/I18nContext.tsx'
 
 export type PurchaseStatus = 'ACTIVE' | 'BLOCKED' | 'CANCELLED' | 'COMPLETED'
-export type PurchaseRelation = 'BUYER' | 'COORDINATOR' | 'INTERNAL' | 'LAWYER' | 'ENGINEER' | 'ESCROW'
+/** ADMIN: admin na tržištu kupovine; server ga pušta kroz svaku proveru veze. */
+export type PurchaseRelation = 'BUYER' | 'COORDINATOR' | 'INTERNAL' | 'LAWYER' | 'ENGINEER' | 'ESCROW' | 'ADMIN'
 export type StepStatus = 'PENDING' | 'DONE' | 'SKIPPED'
 export type TaskStatus = 'NEW' | 'IN_PROGRESS' | 'WAITING' | 'DONE' | 'REJECTED'
 export type MoneyModel = 'ESCROW' | 'GATE'
@@ -58,13 +59,6 @@ export interface PurchaseDetail extends PurchaseSummary {
   proposedLegalTeam: { id: string; name: string } | null
   steps: PurchaseStep[]
   myRelations: PurchaseRelation[]
-}
-
-export interface PurchaseList {
-  items: PurchaseSummary[]
-  total: number
-  limit: number
-  offset: number
 }
 
 export interface PurchaseTask {

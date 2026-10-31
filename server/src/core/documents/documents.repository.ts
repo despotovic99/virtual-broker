@@ -38,7 +38,12 @@ export class DocumentsRepository {
     return manager.getRepository(Document).findOne({ where: { id } });
   }
 
-  list(manager: EntityManager, filter: DocumentOwnerFilter): Promise<Document[]> {
-    return manager.getRepository(Document).find({ where: { ...filter }, order: { createdAt: 'DESC' }, take: 200 });
+  list(manager: EntityManager, filter: DocumentOwnerFilter, page: { limit: number; offset: number }): Promise<[Document[], number]> {
+    return manager.getRepository(Document).findAndCount({
+      where: { ...filter },
+      order: { createdAt: 'DESC', id: 'ASC' },
+      take: page.limit,
+      skip: page.offset,
+    });
   }
 }

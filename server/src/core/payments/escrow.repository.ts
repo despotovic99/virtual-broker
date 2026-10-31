@@ -27,13 +27,20 @@ export class EscrowRepository {
   }
 
   /** Instrukcije na datim tržištima (naš tim) ili samo za kupovine escrow partnera. */
-  list(manager: EntityManager, filter: { markets?: readonly MarketCode[]; escrowAgentId?: string }): Promise<EscrowInstruction[]> {
+  list(
+    manager: EntityManager,
+    filter: { markets?: readonly MarketCode[]; escrowAgentId?: string },
+    page: { limit: number; offset: number },
+  ): Promise<[EscrowInstruction[], number]> {
+    // Račun je many-to-one, pa join ne umnožava redove i `total` je tačan.
     const query = manager
       .getRepository(EscrowInstruction)
       .createQueryBuilder('instruction')
       .leftJoinAndSelect('instruction.bankAccount', 'account')
       .orderBy('instruction.createdAt', 'DESC')
-      .take(200);
+      .addOrderBy('instruction.id', 'ASC')
+      .take(page.limit)
+      .skip(page.offset);
     if (filter.escrowAgentId) {
       query.where((where) => {
         const sub = where
@@ -50,6 +57,6 @@ export class EscrowRepository {
     } else {
       query.where('1 = 0');
     }
-    return query.getMany();
+    return query.getManyAndCount();
   }
 }

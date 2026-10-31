@@ -5,7 +5,7 @@ import { Authenticated, RequireCapabilities } from '../access/access.decorators.
 import type { AuthUser } from '../access/auth-user.js';
 import { Capability } from '../access/capability.enum.js';
 import { CurrentUser } from '../access/current-user.decorator.js';
-import { DocumentsService, type DocumentResponse } from './documents.service.js';
+import { DocumentsService, type DocumentListResponse, type DocumentResponse } from './documents.service.js';
 import { ListDocumentsQueryDto, UploadDocumentDto } from './dto/upload-document.dto.js';
 import { MAX_DOCUMENT_BYTES, type UploadedFileData } from './file-validation.js';
 
@@ -27,7 +27,7 @@ export class DocumentsController {
   /** Spisak dokumenata jednog vlasnika. Pristup proverava servis (učesnici kupovine, tim na tržištu). */
   @Get()
   @Authenticated()
-  list(@CurrentUser() actor: AuthUser, @Query() query: ListDocumentsQueryDto): Promise<DocumentResponse[]> {
+  list(@CurrentUser() actor: AuthUser, @Query() query: ListDocumentsQueryDto): Promise<DocumentListResponse> {
     return this.documents.list(actor, query);
   }
 

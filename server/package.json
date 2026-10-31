@@ -15,13 +15,14 @@
     "start:prod": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "lint": "oxlint -c oxlint.json src/",
-    "clean:migrations": "node -e \"require('node:fs').rmSync('dist-migrations', { recursive: true, force: true })\"",
-    "build:migrations": "npm run clean:migrations && nest build -p tsconfig.migrations.json",
+    "clean:dist": "node -e \"const fs = require('node:fs'); fs.rmSync('dist', { recursive: true, force: true }); fs.rmSync('tsconfig.build.tsbuildinfo', { force: true })\"",
+    "build:dev": "npm run clean:dist && nest build",
     "migration:generate": "node scripts/migration-generate.mjs",
-    "migration:run:dev": "npm run build:migrations && typeorm migration:run -d dist-migrations/database/data-source.js",
-    "migration:show:dev": "npm run build:migrations && typeorm migration:show -d dist-migrations/database/data-source.js",
-    "migration:revert:dev": "npm run build:migrations && typeorm migration:revert -d dist-migrations/database/data-source.js",
-    "migration:run": "typeorm migration:run -d dist/database/data-source.js"
+    "migration:run:dev": "npm run build:dev && typeorm migration:run -d dist/database/data-source.js",
+    "migration:show:dev": "npm run build:dev && typeorm migration:show -d dist/database/data-source.js",
+    "migration:revert:dev": "npm run build:dev && typeorm migration:revert -d dist/database/data-source.js",
+    "migration:run": "typeorm migration:run -d dist/database/data-source.js",
+    "e2e": "node test/e2e/run.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1158.0",

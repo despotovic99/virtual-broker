@@ -3,13 +3,15 @@ import { DataSource } from 'typeorm';
 import { ApiErrorCode } from '../../common/errors/api-error-code.js';
 import { ApiError } from '../../common/errors/api-error.js';
 import { throwApiError } from '../../common/errors/throw-api-error.js';
+import { toPage, type PaginationQueryDto } from '../../common/pagination/pagination.js';
 import type { EmailMessage } from '../../integrations/dummy/dummy-email.sender.js';
 import type { AuthUser } from '../access/auth-user.js';
+import { auditChanges, auditInitial } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
 import { LegalTeamsService } from '../legal/legal-teams.service.js';
 import { NotificationsService, type NotificationDraft } from '../notifications/notifications.service.js';
 import type { CreateTaskDto, UpdateTaskDto } from './dto/purchase.dto.js';
-import type { PurchaseTaskDto } from './dto/purchase-response.dto.js';
+import type { PurchaseTaskDto, PurchaseTaskListDto } from './dto/purchase-response.dto.js';
 import type { TaskStatus } from './entities/purchase-task.entity.js';
 import { PurchaseAccessService } from './purchase-access.service.js';
 import { toTaskDto } from './purchases.mapper.js';
@@ -80,7 +82,12 @@ export class PurchaseTasksService {
         action: 'purchase.task.created',
         entityType: 'purchase_task',
         entityId: task.id,
-        data: { purchaseId: purchase.id, type: dto.type, assigneeUserId: dto.assigneeUserId },
+        data: {
+          purchaseId: purchase.id,
+          type: dto.type,
+          assigneeUserId: dto.assigneeUserId,
+          changes: auditInitial(task, ['type', 'title', 'assigneeUserId', 'legalTeamId', 'dueAt', 'status']),
+        },
       });
       if (dto.assigneeUserId !== actor.id) {
         emails = await this.notifications.notify(manager, [
@@ -121,7 +128,7 @@ export class PurchaseTasksService {
       const access = await this.access.get(manager, task.purchaseId, actor);
       const isAssignee = task.assigneeUserId === actor.id;
       const isLead = access.legalTeamRole === 'LEAD' && task.legalTeamId === access.purchase.legalTeamId;
-      if (!isAssignee && !isLead) throw new ApiError(ApiErrorCode.Forbidden);
+      if (!isAssignee && !isLead && !this.access.isAdmin(access)) throw new ApiError(ApiErrorCode.Forbidden);
 
       if (dto.status !== task.status && !TRANSITIONS[task.status].includes(dto.status)) {
         throw new ApiError(ApiErrorCode.InvalidStateTransition);
@@ -133,20 +140,24 @@ export class PurchaseTasksService {
 
       const finished = dto.status === 'DONE' || dto.status === 'REJECTED';
       const now = new Date();
-      await this.purchases.updateTask(manager, task.id, {
+      const patch = {
         status: dto.status,
         waitingReason: dto.status === 'WAITING' ? (dto.waitingReason ?? null) : null,
         result: dto.result ?? task.result,
         documentId: dto.documentId ?? task.documentId,
         completedAt: finished ? now : null,
-      });
+      };
+      await this.purchases.updateTask(manager, task.id, patch);
       await this.audit.record(manager, {
         market: task.market,
         actorId: actor.id,
         action: 'purchase.task.updated',
         entityType: 'purchase_task',
         entityId: task.id,
-        data: { from: task.status, to: dto.status },
+        data: {
+          purchaseId: task.purchaseId,
+          changes: auditChanges(task, patch, ['status', 'waitingReason', 'result', 'documentId', 'completedAt']),
+        },
       });
 
       const drafts: NotificationDraft[] = [];
@@ -177,13 +188,13 @@ export class PurchaseTasksService {
     return result;
   }
 
-  async listForPurchase(actor: AuthUser, purchaseId: string): Promise<PurchaseTaskDto[]> {
+  async listForPurchase(actor: AuthUser, purchaseId: string, query: PaginationQueryDto): Promise<PurchaseTaskListDto> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     try {
       await this.access.get(queryRunner.manager, purchaseId, actor);
-      const tasks = await this.purchases.listTasksForPurchase(queryRunner.manager, purchaseId);
-      return tasks.map(toTaskDto);
+      const [tasks, total] = await this.purchases.listTasksForPurchase(queryRunner.manager, purchaseId, query);
+      return toPage(tasks.map(toTaskDto), total, query);
     } catch (error) {
       throwApiError(error);
     } finally {
@@ -191,12 +202,12 @@ export class PurchaseTasksService {
     }
   }
 
-  async listMine(actor: AuthUser): Promise<PurchaseTaskDto[]> {
+  async listMine(actor: AuthUser, query: PaginationQueryDto): Promise<PurchaseTaskListDto> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     try {
-      const tasks = await this.purchases.listTasksForAssignee(queryRunner.manager, actor.id, OPEN_STATUSES);
-      return tasks.map(toTaskDto);
+      const [tasks, total] = await this.purchases.listTasksForAssignee(queryRunner.manager, actor.id, OPEN_STATUSES, query);
+      return toPage(tasks.map(toTaskDto), total, query);
     } catch (error) {
       throwApiError(error);
     } finally {

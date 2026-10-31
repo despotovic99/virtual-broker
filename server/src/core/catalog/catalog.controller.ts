@@ -3,7 +3,7 @@ import { RequireCapabilities } from '../access/access.decorators.js';
 import type { AuthUser } from '../access/auth-user.js';
 import { Capability } from '../access/capability.enum.js';
 import { CurrentUser } from '../access/current-user.decorator.js';
-import { CatalogAdminService, type ProjectListResponse } from './catalog-admin.service.js';
+import { CatalogAdminService, type DeveloperListResponse, type ProjectListResponse } from './catalog-admin.service.js';
 import type { BankAccountResponse, DeveloperResponse, ProjectResponse, UnitResponse } from './catalog.mapper.js';
 import {
   CreateBankAccountDto,
@@ -30,7 +30,7 @@ export class CatalogController {
 
   @Get('developers')
   @RequireCapabilities(Capability.CatalogRead)
-  listDevelopers(@CurrentUser() actor: AuthUser, @Query() query: ListDevelopersQueryDto): Promise<DeveloperResponse[]> {
+  listDevelopers(@CurrentUser() actor: AuthUser, @Query() query: ListDevelopersQueryDto): Promise<DeveloperListResponse> {
     return this.catalog.listDevelopers(actor, query);
   }
 

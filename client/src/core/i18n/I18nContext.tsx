@@ -31,6 +31,8 @@ interface I18nValue {
   l: (text: Localized | null | undefined) => string
   formatMoney: (amount: number, currency?: string) => string
   formatDate: (iso: string | null | undefined) => string
+  /** Datum i vreme do sekunde (npr. audit): 31.10.2026. 14:05:09. */
+  formatDateTime: (iso: string | null | undefined) => string
   formatNumber: (value: number, fractionDigits?: number) => string
 }
 
@@ -63,8 +65,21 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       },
       l: (text) => (text ? text[language] || text.sr : ''),
       formatMoney: (amount, currency = 'EUR') =>
-        new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 0 }).format(amount),
-      formatDate: (iso) => (iso ? new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(new Date(iso)) : '—'),
+        new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount),
+      formatDate: (iso) =>
+        iso ? new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(iso)) : '—',
+      formatDateTime: (iso) =>
+        iso
+          ? new Intl.DateTimeFormat(locale, {
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              hourCycle: 'h23',
+            }).format(new Date(iso))
+          : '—',
       formatNumber: (value, fractionDigits = 0) =>
         fractionDigits === 0
           ? numberFormat.format(value)

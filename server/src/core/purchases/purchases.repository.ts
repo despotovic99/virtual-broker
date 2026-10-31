@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Brackets, In, type EntityManager } from 'typeorm';
+import type { PaginationQueryDto } from '../../common/pagination/pagination.js';
 import type { MarketCode } from '../../markets/market-code.js';
 import { Document } from '../documents/entities/document.entity.js';
 import { LegalOpinion } from '../legal/entities/legal-opinion.entity.js';
@@ -50,6 +51,8 @@ export interface PersonRow {
   lastName: string;
   email: string;
 }
+
+type PageWindow = Pick<PaginationQueryDto, 'limit' | 'offset'>;
 
 @Injectable()
 export class PurchasesRepository {
@@ -105,6 +108,7 @@ export class PurchasesRepository {
         }),
       )
       .orderBy('purchase.createdAt', 'DESC')
+      .addOrderBy('purchase.id', 'ASC')
       .addOrderBy('step.position', 'ASC')
       .take(filter.limit)
       .skip(filter.offset);
@@ -159,11 +163,21 @@ export class PurchasesRepository {
     await manager.getRepository(PurchaseTask).update({ id }, data);
   }
 
-  listTasksForPurchase(manager: EntityManager, purchaseId: string): Promise<PurchaseTask[]> {
-    return manager.getRepository(PurchaseTask).find({ where: { purchaseId }, order: { createdAt: 'DESC' }, take: 200 });
+  listTasksForPurchase(manager: EntityManager, purchaseId: string, page: PageWindow): Promise<[PurchaseTask[], number]> {
+    return manager.getRepository(PurchaseTask).findAndCount({
+      where: { purchaseId },
+      order: { createdAt: 'DESC', id: 'ASC' },
+      take: page.limit,
+      skip: page.offset,
+    });
   }
 
-  listTasksForAssignee(manager: EntityManager, userId: string, statuses: readonly TaskStatus[]): Promise<PurchaseTask[]> {
+  listTasksForAssignee(
+    manager: EntityManager,
+    userId: string,
+    statuses: readonly TaskStatus[],
+    page: PageWindow,
+  ): Promise<[PurchaseTask[], number]> {
     return manager
       .getRepository(PurchaseTask)
       .createQueryBuilder('task')
@@ -171,8 +185,10 @@ export class PurchasesRepository {
       .andWhere('task.status IN (:...statuses)', { statuses: [...statuses] })
       .orderBy('task.dueAt', 'ASC', 'NULLS LAST')
       .addOrderBy('task.createdAt', 'ASC')
-      .take(200)
-      .getMany();
+      .addOrderBy('task.id', 'ASC')
+      .take(page.limit)
+      .skip(page.offset)
+      .getManyAndCount();
   }
 
   // ---- Poruke ----

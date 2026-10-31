@@ -1,15 +1,16 @@
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
-import { ApiError } from '../api/http.ts'
+import { Button, ErrorBox, Field } from '../../ui/components.tsx'
 import { useI18n } from '../i18n/I18nContext.tsx'
 import { useAuth } from './AuthContext.tsx'
+import { AuthFrame } from './AuthFrame.tsx'
 
 export function LoginPage() {
   const { login } = useAuth()
   const { t } = useI18n()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const [submitting, setSubmitting] = useState(false)
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -19,7 +20,7 @@ export function LoginPage() {
     try {
       await login(email, password)
     } catch (reason) {
-      setError(reason instanceof ApiError ? reason.message : t('error.UNKNOWN'))
+      setError(reason)
       setPassword('')
     } finally {
       setSubmitting(false)
@@ -27,15 +28,20 @@ export function LoginPage() {
   }
 
   return (
-    <main className="auth">
-      <h1>{t('auth.login')}</h1>
+    <AuthFrame
+      title={t('auth.login')}
+      lead={t('auth.loginLead')}
+      footer={
+        <>
+          {t('auth.noAccount')} <Link to="/register">{t('auth.register')}</Link>
+        </>
+      }
+    >
       <form onSubmit={(event) => void onSubmit(event)} noValidate>
-        <label className="field">
-          <span className="field-label">{t('auth.email')}</span>
+        <Field label={t('auth.email')}>
           <input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={254} required />
-        </label>
-        <label className="field">
-          <span className="field-label">{t('auth.password')}</span>
+        </Field>
+        <Field label={t('auth.password')}>
           <input
             type="password"
             autoComplete="current-password"
@@ -44,19 +50,18 @@ export function LoginPage() {
             maxLength={128}
             required
           />
-        </label>
-        {error && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
-        <button type="submit" className="primary" disabled={submitting || !email || !password}>
-          {t('auth.loginAction')}
-        </button>
+        </Field>
+        <ErrorBox error={error} />
+        <Button
+          type="submit"
+          variant="primary"
+          busy={submitting}
+          disabled={!email || !password}
+          title={!email || !password ? t('auth.fillBoth') : undefined}
+        >
+          {submitting ? t('auth.loggingIn') : t('auth.loginAction')}
+        </Button>
       </form>
-      <p className="muted">
-        {t('auth.noAccount')} <Link to="/register">{t('auth.register')}</Link>
-      </p>
-    </main>
+    </AuthFrame>
   )
 }

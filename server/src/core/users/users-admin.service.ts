@@ -7,9 +7,10 @@ import type { MarketCode } from '../../markets/market-code.js';
 import type { AuthUser } from '../access/auth-user.js';
 import { MARKET_SCOPED_ROLES, Role } from '../access/role.enum.js';
 import { canAssignRoles } from '../access/role-capabilities.js';
+import { auditChanges } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
 import { SessionsService } from '../auth/sessions.service.js';
-import { isSuperAdmin } from './admin-scope.js';
+import { canSeeUser, isSuperAdmin } from './admin-scope.js';
 import type { UpdateUserDto } from './dto/update-user.dto.js';
 import type { UserResponseDto } from './dto/user-response.dto.js';
 import type { User } from './entities/user.entity.js';
@@ -61,11 +62,12 @@ export class UsersAdminService {
       const manager = queryRunner.manager;
       if (dto.roles) await this.users.replaceRoles(manager, target.id, roles, actor.id);
       if (dto.markets) await this.users.replaceMarkets(manager, target.id, markets);
-      await this.users.updateProfile(manager, target.id, {
+      const profile: Partial<Pick<User, 'firstName' | 'lastName' | 'isActive'>> = {
         ...(dto.firstName !== undefined ? { firstName: dto.firstName.trim() } : {}),
         ...(dto.lastName !== undefined ? { lastName: dto.lastName.trim() } : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
-      });
+      };
+      await this.users.updateProfile(manager, target.id, profile);
       // Nova prava važe od sledeće prijave; access token ističe najkasnije za 10 min.
       if (changesAccess) await this.sessions.revokeAllForUser(manager, target.id, new Date());
       await this.audit.record(manager, {
@@ -75,10 +77,22 @@ export class UsersAdminService {
         entityType: 'user',
         entityId: target.id,
         data: {
-          roles: dto.roles ? roles : null,
-          markets: dto.markets ? markets : null,
-          isActive: dto.isActive ?? null,
-          profileChanged: dto.firstName !== undefined || dto.lastName !== undefined,
+          // Uloge i tržišta se porede kao sortirani nizovi (redosled nije izmena).
+          changes: auditChanges(
+            {
+              firstName: target.firstName,
+              lastName: target.lastName,
+              isActive: target.isActive,
+              roles: [...currentRoles].sort(),
+              markets: [...currentMarkets].sort(),
+            },
+            {
+              ...profile,
+              ...(dto.roles ? { roles: [...roles].sort() } : {}),
+              ...(dto.markets ? { markets: [...markets].sort() } : {}),
+            },
+            ['firstName', 'lastName', 'roles', 'markets', 'isActive'],
+          ),
         },
       });
 
@@ -93,11 +107,8 @@ export class UsersAdminService {
     }
   }
 
-  /** Admin vidi korisnike sa bar jednim svojim tržištem i korisnike bez tržišta. */
   private canSee(actor: AuthUser, target: User): boolean {
-    if (isSuperAdmin(actor)) return true;
-    const markets = target.markets.map((userMarket) => userMarket.market);
-    return markets.length === 0 || markets.some((market) => actor.markets.includes(market));
+    return canSeeUser(actor, target.markets.map((userMarket) => userMarket.market));
   }
 
   /**

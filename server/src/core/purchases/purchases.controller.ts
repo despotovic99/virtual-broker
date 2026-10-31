@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { PaginationQueryDto } from '../../common/pagination/pagination.js';
 import { RequireCapabilities } from '../access/access.decorators.js';
 import type { AuthUser } from '../access/auth-user.js';
 import { Capability } from '../access/capability.enum.js';
@@ -20,6 +21,7 @@ import type {
   PurchaseListDto,
   PurchaseMessageDto,
   PurchaseTaskDto,
+  PurchaseTaskListDto,
 } from './dto/purchase-response.dto.js';
 import { PurchaseMessagesService } from './purchase-messages.service.js';
 import { PurchaseTasksService } from './purchase-tasks.service.js';
@@ -109,8 +111,12 @@ export class PurchasesController {
 
   @Get(':id/tasks')
   @RequireCapabilities(Capability.PurchasesRead)
-  listTasks(@CurrentUser() actor: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<PurchaseTaskDto[]> {
-    return this.tasks.listForPurchase(actor, id);
+  listTasks(
+    @CurrentUser() actor: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: PaginationQueryDto,
+  ): Promise<PurchaseTaskListDto> {
+    return this.tasks.listForPurchase(actor, id, query);
   }
 
   @Get(':id/messages')
@@ -136,8 +142,8 @@ export class TasksController {
 
   @Get('mine')
   @RequireCapabilities(Capability.TasksWork)
-  mine(@CurrentUser() actor: AuthUser): Promise<PurchaseTaskDto[]> {
-    return this.tasks.listMine(actor);
+  mine(@CurrentUser() actor: AuthUser, @Query() query: PaginationQueryDto): Promise<PurchaseTaskListDto> {
+    return this.tasks.listMine(actor, query);
   }
 
   @Patch(':id')

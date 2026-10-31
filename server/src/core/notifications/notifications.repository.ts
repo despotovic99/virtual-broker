@@ -28,8 +28,13 @@ export class NotificationsRepository {
     return new Map(users.map((user) => [user.id, user.email]));
   }
 
-  listForUser(manager: EntityManager, userId: string, limit: number): Promise<Notification[]> {
-    return manager.getRepository(Notification).find({ where: { userId }, order: { createdAt: 'DESC' }, take: limit });
+  listForUser(manager: EntityManager, userId: string, page: { limit: number; offset: number }): Promise<[Notification[], number]> {
+    return manager.getRepository(Notification).findAndCount({
+      where: { userId },
+      order: { createdAt: 'DESC', id: 'ASC' },
+      take: page.limit,
+      skip: page.offset,
+    });
   }
 
   countUnread(manager: EntityManager, userId: string): Promise<number> {

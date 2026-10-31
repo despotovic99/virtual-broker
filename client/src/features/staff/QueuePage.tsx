@@ -1,24 +1,19 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { useAuth } from '../../core/auth/AuthContext.tsx'
 import type { MarketCode } from '../../core/auth/capabilities.ts'
 import { useI18n } from '../../core/i18n/I18nContext.tsx'
-import { Card, Empty, ErrorBox, Loading, Page, StatusBadge } from '../../ui/components.tsx'
-import { useAsync } from '../../ui/useAsync.ts'
+import { Button, Field, Page, StatusBadge } from '../../ui/components.tsx'
+import { DataTable, type Column } from '../../ui/DataTable.tsx'
+import { statusSignal } from '../../ui/status.ts'
+import { usePagedQuery } from '../../ui/usePagination.ts'
 import { staffApi } from './api.ts'
-import { MarketSelect, useStaffT } from './shared.tsx'
+import { isRequestLate, LateChip, MarketSelect, useStaffT } from './shared.tsx'
 import type { BuyerRequest, RequestStatus } from './types.ts'
 
 const STATUSES: RequestStatus[] = ['NEW', 'IN_TRIAGE', 'WITH_LEGAL_TEAM', 'ANSWERED', 'CONVERTED', 'CLOSED']
 
-export function requestTone(status: RequestStatus): 'neutral' | 'good' | 'warn' | 'bad' {
-  if (status === 'NEW') return 'warn'
-  if (status === 'ANSWERED' || status === 'CONVERTED') return 'good'
-  if (status === 'CLOSED') return 'neutral'
-  return 'neutral'
-}
-
-/** Red zahteva: naš tim (requests:triage) i advokati (requests:answer-legal). */
+/** Red zahteva: naš tim (requests:triage) i advokati (requests:answer-legal). Dve tabele, svaka sa svojom stranom u URL-u. */
 export function QueuePage() {
   const { can } = useAuth()
   const st = useStaffT()
@@ -35,88 +30,111 @@ export function QueuePage() {
 
 function TriageQueue() {
   const st = useStaffT()
+  const { t } = useI18n()
   const [status, setStatus] = useState<RequestStatus | ''>('')
   const [market, setMarket] = useState<MarketCode | ''>('')
-  const { data, error, loading, reload } = useAsync(() => staffApi.queue({ status, market }), [status, market])
+  const list = usePagedQuery((page) => staffApi.queue({ status, market, ...page }), [status, market], { prefix: 'triage' })
 
   return (
-    <Card
-      actions={
-        <div className="row">
-          <select value={status} onChange={(event) => setStatus(event.target.value as RequestStatus | '')} aria-label="status">
-            <option value="">{st('all')}</option>
-            {STATUSES.map((value) => (
-              <option key={value} value={value}>
-                {st(`reqStatus.${value}`)}
-              </option>
-            ))}
-          </select>
-          <MarketSelect value={market} onChange={setMarket} allowAll />
-          <button type="button" onClick={reload}>
-            {st('refresh')}
-          </button>
-        </div>
+    <RequestTable
+      list={list}
+      empty={status || market ? st('queue.noMatch') : st('queue.none')}
+      toolbar={
+        <>
+          <Field label={t('common.status')}>
+            <select value={status} onChange={(event) => setStatus(event.target.value as RequestStatus | '')}>
+              <option value="">{st('all')}</option>
+              {STATUSES.map((value) => (
+                <option key={value} value={value}>
+                  {st(`reqStatus.${value}`)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={t('common.market')}>
+            <MarketSelect value={market} onChange={setMarket} allowAll />
+          </Field>
+        </>
       }
-    >
-      <ErrorBox error={error} />
-      {loading && !data ? <Loading /> : <RequestTable requests={data ?? []} />}
-    </Card>
+    />
   )
 }
 
 function LegalQueue() {
   const st = useStaffT()
-  const { data, error, loading } = useAsync(() => staffApi.legalQueue(), [])
-  return (
-    <Card title={st('queue.legalTitle')}>
-      <ErrorBox error={error} />
-      {loading && !data ? <Loading /> : <RequestTable requests={data ?? []} />}
-    </Card>
-  )
+  const list = usePagedQuery((page) => staffApi.legalQueue(page), [], { prefix: 'legal' })
+  return <RequestTable title={st('queue.legalTitle')} list={list} empty={st('queue.none')} />
 }
 
-function RequestTable({ requests }: { requests: BuyerRequest[] }) {
+function RequestTable({
+  title,
+  list,
+  empty,
+  toolbar,
+}: {
+  title?: string
+  list: ReturnType<typeof usePagedQuery<BuyerRequest>>
+  empty: string
+  toolbar?: ReactNode
+}) {
   const { t, formatDate } = useI18n()
   const st = useStaffT()
-  if (requests.length === 0) return <Empty />
   const now = Date.now()
+
+  const columns: Column<BuyerRequest>[] = [
+    {
+      key: 'subject',
+      header: st('queue.subject'),
+      cell: (request) => (
+        <span className="cell-title">
+          <strong>{request.developerName ?? request.registrationNumber ?? request.address ?? request.question?.slice(0, 60) ?? '—'}</strong>
+          {request.registrationNumber && request.developerName && <span className="meta">{request.registrationNumber}</span>}
+        </span>
+      ),
+    },
+    { key: 'kind', header: st('queue.kind'), cell: (request) => st(`kind.${request.kind}`) },
+    { key: 'market', header: t('common.market'), hideOnMobile: true, cell: (request) => t(`market.${request.market}`) },
+    {
+      key: 'status',
+      header: t('common.status'),
+      cell: (request) => <StatusBadge text={st(`reqStatus.${request.status}`)} {...statusSignal('request', request.status)} />,
+    },
+    {
+      key: 'due',
+      header: st('queue.due'),
+      cell: (request) => (
+        <span className="row">
+          <span className="mono">{formatDate(request.firstResponseDueAt)}</span>
+          {isRequestLate(request, now) && <LateChip text={st('queue.late')} />}
+        </span>
+      ),
+    },
+  ]
+
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table>
-        <thead>
-          <tr>
-            <th>{st('queue.kind')}</th>
-            <th>{t('common.market')}</th>
-            <th>{st('queue.subject')}</th>
-            <th>{t('common.status')}</th>
-            <th>{st('queue.due')}</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {requests.map((request) => {
-            const late =
-              new Date(request.firstResponseDueAt).getTime() < now &&
-              ['NEW', 'IN_TRIAGE', 'WITH_LEGAL_TEAM'].includes(request.status)
-            return (
-              <tr key={request.id}>
-                <td>{st(`kind.${request.kind}`)}</td>
-                <td>{t(`market.${request.market}`)}</td>
-                <td>{request.developerName ?? request.registrationNumber ?? request.address ?? request.question?.slice(0, 60) ?? '—'}</td>
-                <td>
-                  <StatusBadge text={st(`reqStatus.${request.status}`)} tone={requestTone(request.status)} />
-                </td>
-                <td>
-                  {formatDate(request.firstResponseDueAt)} {late && <StatusBadge text={st('queue.late')} tone="bad" />}
-                </td>
-                <td>
-                  <Link to={`/queue/${request.id}`}>{st('open')}</Link>
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      title={title}
+      caption={title ?? st('queue.title')}
+      columns={columns}
+      rows={list.rows}
+      rowKey={(request) => request.id}
+      loading={list.loading}
+      error={list.error}
+      onRetry={list.reload}
+      pagination={list.pagination}
+      empty={empty}
+      toolbar={toolbar}
+      rowClassName={(request) => (isRequestLate(request, now) ? 'row--risk' : undefined)}
+      actions={
+        <Button size="sm" variant="quiet" busy={list.loading && list.rows !== undefined} onClick={list.reload}>
+          {st('refresh')}
+        </Button>
+      }
+      rowActions={(request) => (
+        <Link className="btn btn--quiet btn--sm" to={`/queue/${request.id}`}>
+          {st('open')}
+        </Link>
+      )}
+    />
   )
 }

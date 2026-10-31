@@ -8,6 +8,7 @@ import { AppModule } from './app.module.js';
 import { ApiExceptionFilter } from './common/errors/api-exception.filter.js';
 import { bodyParserErrorHandler } from './common/errors/body-parser-error.handler.js';
 import { validationExceptionFactory } from './common/errors/validation-exception.factory.js';
+import { requestContextMiddleware } from './common/request-context/request-context.js';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
@@ -25,6 +26,8 @@ async function bootstrap(): Promise<void> {
     }),
   );
   // Potreban za refresh token cookie (/api/auth/refresh i /api/auth/logout).
+  // Kontekst zahteva (IP za audit) važi do kraja obrade, i u servisima.
+  app.use(requestContextMiddleware);
   app.use(cookieParser());
 
   app.enableCors({

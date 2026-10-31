@@ -1,4 +1,5 @@
 import { IsIn, IsOptional, IsString, IsUrl, IsUUID, Length, Matches, MaxLength } from 'class-validator';
+import { PaginationQueryDto } from '../../../common/pagination/pagination.js';
 import { MARKET_CODES, type MarketCode } from '../../../markets/market-code.js';
 import { ANSWER_SCOPES, REQUEST_KINDS, REQUEST_STATUSES, type AnswerScope, type RequestKind, type RequestStatus } from '../entities/buyer-request.entity.js';
 
@@ -51,7 +52,7 @@ export class CreateRequestDto {
   unitId?: string;
 }
 
-export class RequestQueueQueryDto {
+export class RequestQueueQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn([...REQUEST_STATUSES])
   status?: RequestStatus;

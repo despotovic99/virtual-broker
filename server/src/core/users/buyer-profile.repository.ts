@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
-import { BuyerProfile } from '../users/entities/buyer-profile.entity.js';
+import { BuyerProfile } from './entities/buyer-profile.entity.js';
 
 @Injectable()
 export class BuyerProfileRepository {

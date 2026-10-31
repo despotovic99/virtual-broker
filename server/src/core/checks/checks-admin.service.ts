@@ -3,17 +3,19 @@ import { DataSource, type EntityManager } from 'typeorm';
 import { ApiErrorCode } from '../../common/errors/api-error-code.js';
 import { ApiError } from '../../common/errors/api-error.js';
 import { throwApiError } from '../../common/errors/throw-api-error.js';
+import { toPage, type Page } from '../../common/pagination/pagination.js';
 import type { MarketCode } from '../../markets/market-code.js';
 import type { CheckDefinition, Localized } from '../../markets/market-pack.js';
 import type { AuthUser } from '../access/auth-user.js';
 import { hasMarketAccess, hasRole, isInternalOnMarket } from '../access/market-access.js';
 import { Role } from '../access/role.enum.js';
+import { auditInitial } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import type { Developer } from '../catalog/entities/developer.entity.js';
 import type { Project } from '../catalog/entities/project.entity.js';
 import { ChecksRepository } from './checks.repository.js';
-import { ChecksService, SEMAPHORE_DISCLAIMER, type ProjectSemaphore } from './checks.service.js';
+import { checkStatusChanges, ChecksService, SEMAPHORE_DISCLAIMER, type ProjectSemaphore } from './checks.service.js';
 import type { CheckHistoryQueryDto, CheckTargetDto, ManualCheckDto } from './dto/checks.dto.js';
 import type { Check } from './entities/check.entity.js';
 import type { SemaphoreResult } from './semaphore.js';
@@ -39,6 +41,8 @@ export interface CheckHistoryItem {
   checkedById: string | null;
   documentId: string | null;
 }
+
+export type CheckHistoryListResponse = Page<CheckHistoryItem>;
 
 type Target = { kind: 'DEVELOPER'; developer: Developer } | { kind: 'PROJECT'; project: Project; developer: Developer };
 
@@ -75,14 +79,19 @@ export class ChecksAdminService {
 
       await queryRunner.startTransaction();
       const ids = this.targetIds(target);
-      await this.checksService.recordAutomatic(queryRunner.manager, market, ids, results);
+      const changes = await this.checksService.recordAutomatic(queryRunner.manager, market, ids, results);
       await this.audit.record(queryRunner.manager, {
         market,
         actorId: actor.id,
         action: 'checks.automatic.run',
         entityType: target.kind === 'DEVELOPER' ? 'developer' : 'project',
         entityId: ids.developerId ?? ids.projectId,
-        data: { codes: results.map((item) => item.definition.code), dummy: results.some((item) => item.result.dummy) },
+        data: {
+          ...this.relatedKeys(target),
+          codes: results.map((item) => item.definition.code),
+          dummy: results.some((item) => item.result.dummy),
+          changes,
+        },
       });
       const semaphore =
         target.kind === 'DEVELOPER'
@@ -129,6 +138,7 @@ export class ChecksAdminService {
         throw new ApiError(ApiErrorCode.ValidationFailed, { fields: ['documentId'] });
       }
 
+      const previous = await this.checksService.latestStatuses(queryRunner.manager, ids);
       const checkedAt = new Date();
       const check = await this.checks.insertOne(queryRunner.manager, {
         market,
@@ -153,7 +163,16 @@ export class ChecksAdminService {
         action: 'checks.manual.recorded',
         entityType: target.kind === 'DEVELOPER' ? 'developer' : 'project',
         entityId: ids.developerId ?? ids.projectId,
-        data: { code: definition.code, status: dto.status, documentId: dto.documentId ?? null },
+        data: {
+          ...this.relatedKeys(target),
+          code: definition.code,
+          status: dto.status,
+          documentId: dto.documentId ?? null,
+          changes: {
+            ...checkStatusChanges(previous, [{ code: definition.code, status: dto.status }]),
+            ...auditInitial(check, ['summary', 'documentId']),
+          },
+        },
       });
       await queryRunner.commitTransaction();
       return toHistoryItem(check);
@@ -199,7 +218,7 @@ export class ChecksAdminService {
   }
 
   /** Istorija provera: samo naš tim i advokati na tržištu. */
-  async history(actor: AuthUser, query: CheckHistoryQueryDto): Promise<CheckHistoryItem[]> {
+  async history(actor: AuthUser, query: CheckHistoryQueryDto): Promise<CheckHistoryListResponse> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     try {
@@ -210,8 +229,8 @@ export class ChecksAdminService {
       }
       const ids = this.targetIds(target);
       const filter = target.kind === 'DEVELOPER' ? { developerId: ids.developerId ?? undefined } : { projectId: ids.projectId ?? undefined };
-      const checks = await this.checks.historyFor(queryRunner.manager, filter, query.limit);
-      return checks.map(toHistoryItem);
+      const [checks, total] = await this.checks.historyFor(queryRunner.manager, filter, query);
+      return toPage(checks.map(toHistoryItem), total, query);
     } catch (error) {
       throwApiError(error);
     } finally {
@@ -231,6 +250,13 @@ export class ChecksAdminService {
     return { kind: 'PROJECT', project, developer };
   }
 
+  /** Veza traga sa nadređenim: provera projekta se vidi i u istoriji investitora. */
+  private relatedKeys(target: Target): { developerId: string; projectId?: string } {
+    return target.kind === 'DEVELOPER'
+      ? { developerId: target.developer.id }
+      : { developerId: target.developer.id, projectId: target.project.id };
+  }
+
   private marketOf(target: Target): MarketCode {
     return target.kind === 'DEVELOPER' ? target.developer.market : target.project.market;
   }
@@ -241,15 +267,16 @@ export class ChecksAdminService {
       : { developerId: null, projectId: target.project.id };
   }
 
-  /** Provere unose analitičar i advokat, samo na svom tržištu. Nepoznat cilj ostaje NOT_FOUND. */
+  /** Provere unose analitičar, advokat i admin, samo na svom tržištu. Nepoznat cilj ostaje NOT_FOUND. */
   private assertCanManage(actor: AuthUser, market: MarketCode): void {
-    if (!hasMarketAccess(actor, market) || !hasRole(actor, Role.Analyst, Role.Lawyer)) throw new ApiError(ApiErrorCode.NotFound);
+    if (!hasMarketAccess(actor, market) || !hasRole(actor, Role.Analyst, Role.Lawyer, Role.Admin)) throw new ApiError(ApiErrorCode.NotFound);
   }
 
   private assertMethodAllowed(actor: AuthUser, definition: CheckDefinition): void {
     const analystAllowed = hasRole(actor, Role.Analyst) && (definition.method === 'MANUAL' || definition.method === 'DOCUMENT');
     const lawyerAllowed = hasRole(actor, Role.Lawyer) && (definition.method === 'LAWYER' || definition.method === 'DOCUMENT');
-    if (!analystAllowed && !lawyerAllowed) throw new ApiError(ApiErrorCode.Forbidden);
+    const adminAllowed = hasRole(actor, Role.Admin) && definition.method !== 'AUTOMATIC';
+    if (!analystAllowed && !lawyerAllowed && !adminAllowed) throw new ApiError(ApiErrorCode.Forbidden);
   }
 
   private isStaffOn(actor: AuthUser, market: MarketCode): boolean {

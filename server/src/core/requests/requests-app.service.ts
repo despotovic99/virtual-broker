@@ -3,11 +3,14 @@ import { DataSource, type EntityManager } from 'typeorm';
 import { ApiErrorCode } from '../../common/errors/api-error-code.js';
 import { ApiError } from '../../common/errors/api-error.js';
 import { throwApiError } from '../../common/errors/throw-api-error.js';
+import { toPage, type Page, type PaginationQueryDto } from '../../common/pagination/pagination.js';
 import type { EmailMessage } from '../../integrations/dummy/dummy-email.sender.js';
 import type { AuthUser } from '../access/auth-user.js';
-import { hasMarketAccess, hasRole, isInternalOnMarket } from '../access/market-access.js';
+import { hasMarketAccess, hasRole, isAdminOnMarket, isInternalOnMarket } from '../access/market-access.js';
 import { Role } from '../access/role.enum.js';
+import { auditChanges, auditInitial } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
+import type { AuditChange } from '../audit/entities/audit-event.entity.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import type { Developer } from '../catalog/entities/developer.entity.js';
 import type { Project } from '../catalog/entities/project.entity.js';
@@ -25,6 +28,8 @@ import type {
 import type { BuyerRequest, FreeSemaphoreSnapshot } from './entities/buyer-request.entity.js';
 import { toRequestResponse, type RequestResponse } from './requests.mapper.js';
 import { RequestsRepository } from './requests.repository.js';
+
+export type RequestListResponse = Page<RequestResponse>;
 
 /** Najviše besplatnih provera (zahteva tipa CHECK) mesečno po kupcu (F-35, P2). */
 const FREE_CHECKS_PER_MONTH = 5;
@@ -77,11 +82,13 @@ export class RequestsAppService {
 
       await queryRunner.startTransaction();
       // Ako je investitor ili projekat u katalogu, rezultat se čuva i kao provera.
+      let developerCheckChanges: Record<string, AuditChange> | null = null;
+      let projectCheckChanges: Record<string, AuditChange> | null = null;
       if (developer && developerResults.length > 0) {
-        await this.checks.recordAutomatic(manager, dto.market, { developerId: developer.id, projectId: null }, developerResults);
+        developerCheckChanges = await this.checks.recordAutomatic(manager, dto.market, { developerId: developer.id, projectId: null }, developerResults);
       }
       if (project && parcelResults.length > 0) {
-        await this.checks.recordAutomatic(manager, dto.market, { developerId: null, projectId: project.id }, parcelResults);
+        projectCheckChanges = await this.checks.recordAutomatic(manager, dto.market, { developerId: null, projectId: project.id }, parcelResults);
       }
       const now = new Date();
       const freeSemaphore: FreeSemaphoreSnapshot | null =
@@ -116,8 +123,59 @@ export class RequestsAppService {
         action: 'request.created',
         entityType: 'buyer_request',
         entityId: request.id,
-        data: { kind: request.kind, linkedDeveloper: request.developerId !== null, dummy: request.freeSemaphore?.developer?.containsDummyData ?? false },
+        data: {
+          kind: request.kind,
+          linkedDeveloper: request.developerId !== null,
+          dummy: request.freeSemaphore?.developer?.containsDummyData ?? false,
+          changes: auditInitial(request, [
+            'kind',
+            'status',
+            'listingUrl',
+            'developerName',
+            'registrationNumber',
+            'parcelReference',
+            'address',
+            'question',
+            'developerId',
+            'projectId',
+            'unitId',
+          ]),
+        },
       });
+      // Besplatna provera investitora/projekta iz kataloga upisuje i provere: trag na investitoru i projektu.
+      if (developer && developerCheckChanges) {
+        await this.audit.record(manager, {
+          market: request.market,
+          actorId: actor.id,
+          action: 'checks.automatic.run',
+          entityType: 'developer',
+          entityId: developer.id,
+          data: {
+            developerId: developer.id,
+            requestId: request.id,
+            codes: developerResults.map((item) => item.definition.code),
+            dummy: developerResults.some((item) => item.result.dummy),
+            changes: developerCheckChanges,
+          },
+        });
+      }
+      if (project && projectCheckChanges) {
+        await this.audit.record(manager, {
+          market: request.market,
+          actorId: actor.id,
+          action: 'checks.automatic.run',
+          entityType: 'project',
+          entityId: project.id,
+          data: {
+            projectId: project.id,
+            developerId: project.developerId,
+            requestId: request.id,
+            codes: parcelResults.map((item) => item.definition.code),
+            dummy: parcelResults.some((item) => item.result.dummy),
+            changes: projectCheckChanges,
+          },
+        });
+      }
       await queryRunner.commitTransaction();
       return toRequestResponse(request, false);
     } catch (error) {
@@ -128,12 +186,12 @@ export class RequestsAppService {
     }
   }
 
-  async listMine(actor: AuthUser): Promise<RequestResponse[]> {
+  async listMine(actor: AuthUser, query: PaginationQueryDto): Promise<RequestListResponse> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     try {
-      const requests = await this.requests.listForBuyer(queryRunner.manager, actor.id);
-      return requests.map((request) => toRequestResponse(request, false));
+      const [requests, total] = await this.requests.listForBuyer(queryRunner.manager, actor.id, query);
+      return toPage(requests.map((request) => toRequestResponse(request, false)), total, query);
     } catch (error) {
       throwApiError(error);
     } finally {
@@ -161,13 +219,13 @@ export class RequestsAppService {
   }
 
   /** Red zahteva za naš tim (analitičar, koordinator, admin) na njegovim tržištima. */
-  async queue(actor: AuthUser, query: RequestQueueQueryDto): Promise<RequestResponse[]> {
+  async queue(actor: AuthUser, query: RequestQueueQueryDto): Promise<RequestListResponse> {
     const markets = actor.markets.filter((market) => isInternalOnMarket(actor, market) && (!query.market || market === query.market));
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     try {
-      const requests = await this.requests.listQueue(queryRunner.manager, markets, query.status);
-      return requests.map((request) => toRequestResponse(request, true));
+      const [requests, total] = await this.requests.listQueue(queryRunner.manager, markets, query.status, query);
+      return toPage(requests.map((request) => toRequestResponse(request, true)), total, query);
     } catch (error) {
       throwApiError(error);
     } finally {
@@ -175,14 +233,14 @@ export class RequestsAppService {
     }
   }
 
-  /** Zahtevi prosleđeni pravnim timovima u kojima je advokat član. */
-  async legalQueue(actor: AuthUser): Promise<RequestResponse[]> {
+  /** Zahtevi prosleđeni pravnim timovima u kojima je advokat član, samo na njegovim tržištima. */
+  async legalQueue(actor: AuthUser, query: PaginationQueryDto): Promise<RequestListResponse> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     try {
       const teamIds = await this.legalTeams.teamIdsForUser(queryRunner.manager, actor.id);
-      const requests = await this.requests.listForLegalTeams(queryRunner.manager, teamIds);
-      return requests.filter((request) => hasMarketAccess(actor, request.market)).map((request) => toRequestResponse(request, true));
+      const [requests, total] = await this.requests.listForLegalTeams(queryRunner.manager, teamIds, actor.markets, query);
+      return toPage(requests.map((request) => toRequestResponse(request, true)), total, query);
     } catch (error) {
       throwApiError(error);
     } finally {
@@ -232,7 +290,12 @@ export class RequestsAppService {
         action: 'request.linked',
         entityType: 'buyer_request',
         entityId: id,
-        data: { developerId: updated.developerId, projectId: updated.projectId, unitId: updated.unitId },
+        data: {
+          developerId: updated.developerId,
+          projectId: updated.projectId,
+          unitId: updated.unitId,
+          changes: auditChanges(request, changes, ['developerId', 'projectId', 'unitId']),
+        },
       });
       await queryRunner.commitTransaction();
       return toRequestResponse(updated, true);
@@ -258,11 +321,12 @@ export class RequestsAppService {
       if (request.developerId && team.conflictDeveloperIds.includes(request.developerId)) {
         throw new ApiError(ApiErrorCode.LegalTeamNotAvailable);
       }
-      const updated = await this.requests.update(queryRunner.manager, id, {
+      const patch: Partial<BuyerRequest> = {
         legalTeamId: team.id,
         status: 'WITH_LEGAL_TEAM',
         ownerUserId: request.ownerUserId ?? actor.id,
-      });
+      };
+      const updated = await this.requests.update(queryRunner.manager, id, patch);
       emails = await this.notifications.notify(
         queryRunner.manager,
         (team.members ?? []).map((member) => ({
@@ -279,7 +343,11 @@ export class RequestsAppService {
         action: 'request.forwarded',
         entityType: 'buyer_request',
         entityId: id,
-        data: { legalTeamId: team.id },
+        data: {
+          legalTeamId: team.id,
+          teamId: team.id,
+          changes: auditChanges(request, patch, ['status', 'legalTeamId', 'ownerUserId']),
+        },
       });
       await queryRunner.commitTransaction();
       response = toRequestResponse(updated, true);
@@ -326,25 +394,28 @@ export class RequestsAppService {
       let request: BuyerRequest;
       if (asLawyer) {
         const found = await this.requests.findByIdForUpdate(manager, id);
-        if (!found || !found.legalTeamId || !hasMarketAccess(actor, found.market) || !hasRole(actor, Role.Lawyer)) {
-          throw new ApiError(ApiErrorCode.NotFound);
+        if (!found || !found.legalTeamId || !hasMarketAccess(actor, found.market)) throw new ApiError(ApiErrorCode.NotFound);
+        // Admin na tržištu odgovara i bez članstva u timu; advokat mora biti LEAD ili LAWYER u timu.
+        if (!isAdminOnMarket(actor, found.market)) {
+          if (!hasRole(actor, Role.Lawyer)) throw new ApiError(ApiErrorCode.NotFound);
+          const teamRole = await this.legalTeams.memberRole(manager, found.legalTeamId, actor.id);
+          if (!teamRole) throw new ApiError(ApiErrorCode.NotFound);
+          if (teamRole === 'ASSOCIATE') throw new ApiError(ApiErrorCode.Forbidden);
         }
-        const teamRole = await this.legalTeams.memberRole(manager, found.legalTeamId, actor.id);
-        if (!teamRole) throw new ApiError(ApiErrorCode.NotFound);
-        if (teamRole === 'ASSOCIATE') throw new ApiError(ApiErrorCode.Forbidden);
         if (found.status !== 'WITH_LEGAL_TEAM') throw new ApiError(ApiErrorCode.InvalidStateTransition);
         request = found;
       } else {
         request = await this.lockOpen(manager, actor, id);
       }
 
-      const updated = await this.requests.update(manager, id, {
+      const patch: Partial<BuyerRequest> = {
         answer: answer.trim(),
         answerScope,
         answeredById: actor.id,
         answeredAt: new Date(),
         status: 'ANSWERED',
-      });
+      };
+      const updated = await this.requests.update(manager, id, patch);
       emails = await this.notifications.notify(manager, [
         {
           userId: request.buyerId,
@@ -360,7 +431,11 @@ export class RequestsAppService {
         action: asLawyer ? 'request.answered.legal' : 'request.answered',
         entityType: 'buyer_request',
         entityId: id,
-        data: { answerScope },
+        data: {
+          answerScope,
+          // Tekst odgovora je u samom zahtevu; u tragu su status, vrsta i vreme odgovora.
+          changes: auditChanges(request, patch, ['status', 'answerScope', 'answeredById', 'answeredAt']),
+        },
       });
       await queryRunner.commitTransaction();
       response = toRequestResponse(updated, true);
@@ -393,7 +468,7 @@ export class RequestsAppService {
         action,
         entityType: 'buyer_request',
         entityId: id,
-        data: { previousStatus: request.status, status: updated.status },
+        data: { changes: auditChanges(request, changes, ['status', 'ownerUserId']) },
       });
       await queryRunner.commitTransaction();
       return toRequestResponse(updated, true);

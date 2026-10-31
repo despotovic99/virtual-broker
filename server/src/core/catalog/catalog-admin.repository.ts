@@ -43,14 +43,21 @@ export class CatalogAdminRepository {
     return repository.findOneOrFail({ where: { id } });
   }
 
-  listDevelopers(manager: EntityManager, markets: readonly MarketCode[], search: string | undefined): Promise<Developer[]> {
-    if (markets.length === 0) return Promise.resolve([]);
+  listDevelopers(
+    manager: EntityManager,
+    markets: readonly MarketCode[],
+    search: string | undefined,
+    page: { limit: number; offset: number },
+  ): Promise<[Developer[], number]> {
+    if (markets.length === 0) return Promise.resolve([[], 0]);
     const query = manager
       .getRepository(Developer)
       .createQueryBuilder('developer')
       .where('developer.market IN (:...markets)', { markets: [...markets] })
       .orderBy('developer.name', 'ASC')
-      .take(200);
+      .addOrderBy('developer.id', 'ASC')
+      .take(page.limit)
+      .skip(page.offset);
     if (search) {
       query.andWhere(
         new Brackets((where) => {
@@ -60,7 +67,7 @@ export class CatalogAdminRepository {
         }),
       );
     }
-    return query.getMany();
+    return query.getManyAndCount();
   }
 
   findDeveloperByRegistration(manager: EntityManager, market: MarketCode, registrationNumber: string): Promise<Developer | null> {
@@ -99,6 +106,12 @@ export class CatalogAdminRepository {
 
   findProjectForUpdate(manager: EntityManager, id: string): Promise<Project | null> {
     return manager.getRepository(Project).findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+  }
+
+  /** Investitor projekta (za vezu audit traga stana sa investitorom). */
+  async findProjectDeveloperId(manager: EntityManager, id: string): Promise<string | null> {
+    const project = await manager.getRepository(Project).findOne({ select: { id: true, developerId: true }, where: { id } });
+    return project?.developerId ?? null;
   }
 
   async updateProject(manager: EntityManager, id: string, data: Partial<Project>): Promise<Project> {

@@ -4,6 +4,7 @@ import { CHECK_INTEGRATIONS, type CheckIntegration, type IntegrationInput, type 
 import type { MarketCode } from '../../markets/market-code.js';
 import type { CheckDefinition, CheckSubject, Localized } from '../../markets/market-pack.js';
 import { MarketRegistry } from '../../markets/market-registry.js';
+import type { AuditChange } from '../audit/entities/audit-event.entity.js';
 import type { Developer } from '../catalog/entities/developer.entity.js';
 import type { Project } from '../catalog/entities/project.entity.js';
 import { ChecksRepository, type NewCheck } from './checks.repository.js';
@@ -31,6 +32,14 @@ export const SEMAPHORE_DISCLAIMER: Localized = {
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Audit izmene provera: `check.KOD` → prethodni i novi status (svaki upis je nov rezultat provere). */
+export function checkStatusChanges(
+  previous: ReadonlyMap<string, string>,
+  entries: readonly { code: string; status: string }[],
+): Record<string, AuditChange> {
+  return Object.fromEntries(entries.map((entry) => [`check.${entry.code}`, { from: previous.get(entry.code) ?? null, to: entry.status }]));
+}
 
 /**
  * Provere i semafor (F-05 – F-08). Metodi sa EntityManager-om učestvuju u
@@ -109,13 +118,29 @@ export class ChecksService {
   }
 
   /** Upisuje rezultate automatskih provera (učestvuje u transakciji vlasnika). */
+  /** Upisuje rezultate i vraća izmene za audit (`check.KOD`: prethodni → novi status). */
   async recordAutomatic(
     manager: EntityManager,
     market: MarketCode,
     target: { developerId: string | null; projectId: string | null },
     results: readonly AutomaticCheckResult[],
-  ): Promise<void> {
+  ): Promise<Record<string, AuditChange>> {
+    const previous = await this.latestStatuses(manager, target);
     await this.checks.insertMany(manager, results.map((item) => this.toNewCheck(market, target, item)));
+    return checkStatusChanges(
+      previous,
+      results.map((item) => ({ code: item.definition.code, status: item.result.status })),
+    );
+  }
+
+  /** Poslednji status po kodu provere za investitora ili projekat (pre novog upisa, za audit). */
+  async latestStatuses(manager: EntityManager, target: { developerId: string | null; projectId: string | null }): Promise<Map<string, string>> {
+    const latest = target.developerId
+      ? await this.checks.latestForDeveloper(manager, target.developerId)
+      : target.projectId
+        ? await this.checks.latestForProject(manager, target.projectId)
+        : [];
+    return new Map(latest.map((check) => [check.definitionCode, check.status]));
   }
 
   /**

@@ -5,6 +5,7 @@ import { ApiError } from '../../common/errors/api-error.js';
 import { throwApiError } from '../../common/errors/throw-api-error.js';
 import type { EmailMessage } from '../../integrations/dummy/dummy-email.sender.js';
 import type { AuthUser } from '../access/auth-user.js';
+import { auditChanges, auditInitial } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
 import { DocumentsService } from '../documents/documents.service.js';
 import { NotificationsService, type NotificationDraft } from '../notifications/notifications.service.js';
@@ -98,7 +99,12 @@ export class LegalWorkService {
         action: 'power-of-attorney.created',
         entityType: 'power_of_attorney',
         entityId: poa.id,
-        data: { purchaseId: purchase.id, scope: [...dto.scope], validUntil: dto.validUntil ?? null },
+        data: {
+          purchaseId: purchase.id,
+          scope: [...dto.scope],
+          validUntil: dto.validUntil ?? null,
+          changes: auditInitial(poa, ['documentId', 'scope', 'validUntil']),
+        },
       });
 
       const drafts: NotificationDraft[] = [];
@@ -141,7 +147,8 @@ export class LegalWorkService {
       if (!poa) throw new ApiError(ApiErrorCode.NotFound);
       const access = await this.access.get(manager, poa.purchaseId, actor);
       this.access.require(access, 'BUYER');
-      if (!(await this.legal.revokePowerOfAttorney(manager, poa.id, new Date()))) {
+      const revokedAt = new Date();
+      if (!(await this.legal.revokePowerOfAttorney(manager, poa.id, revokedAt))) {
         throw new ApiError(ApiErrorCode.InvalidStateTransition);
       }
       await this.audit.record(manager, {
@@ -150,7 +157,7 @@ export class LegalWorkService {
         action: 'power-of-attorney.revoked',
         entityType: 'power_of_attorney',
         entityId: poa.id,
-        data: { purchaseId: poa.purchaseId },
+        data: { purchaseId: poa.purchaseId, changes: auditChanges(poa, { revokedAt }, ['revokedAt']) },
       });
       const { purchase } = access;
       const recipients = [purchase.lawyerId, purchase.coordinatorId].filter((id): id is string => id !== null);
@@ -201,11 +208,14 @@ export class LegalWorkService {
     try {
       const manager = queryRunner.manager;
       const access = await this.access.get(manager, purchaseId, actor);
-      if (!access.relations.has('LAWYER') || (access.legalTeamRole !== 'LEAD' && access.legalTeamRole !== 'LAWYER')) {
+      // Advokat iz tima (LEAD ili LAWYER) ili admin na tržištu.
+      const isTeamLawyer = access.relations.has('LAWYER') && (access.legalTeamRole === 'LEAD' || access.legalTeamRole === 'LAWYER');
+      if (!isTeamLawyer && !this.access.isAdmin(access)) {
         throw new ApiError(ApiErrorCode.Forbidden);
       }
       const { purchase } = access;
-      if (purchase.status !== 'ACTIVE') throw new ApiError(ApiErrorCode.InvalidStateTransition);
+      // Mišljenje se daje i dok je kupovina blokirana (npr. novo mišljenje posle izmene ugovora).
+      if (purchase.status !== 'ACTIVE' && purchase.status !== 'BLOCKED') throw new ApiError(ApiErrorCode.InvalidStateTransition);
 
       const document = await this.documents.assertBelongsToPurchase(manager, dto.documentId, purchase.id);
       if (document.typeCode !== 'LEGAL_OPINION') throw new ApiError(ApiErrorCode.DocumentTypeNotAllowed);
@@ -225,18 +235,30 @@ export class LegalWorkService {
         action: 'legal-opinion.created',
         entityType: 'legal_opinion',
         entityId: opinion.id,
-        data: { purchaseId: purchase.id, conclusion: dto.conclusion, documentId: document.id },
+        data: {
+          purchaseId: purchase.id,
+          conclusion: dto.conclusion,
+          documentId: document.id,
+          changes: auditInitial(opinion, ['conclusion', 'conditions', 'documentId']),
+        },
       });
 
       const labels = { SIGN: 'potpisati', SIGN_WITH_CONDITIONS: 'potpisati uz uslove', DO_NOT_SIGN: 'ne potpisati' };
       const recipients = [purchase.buyerId, purchase.coordinatorId].filter((id): id is string => id !== null && id !== actor.id);
+      // Negativno mišljenje: koraci ugovora ostaju zatvoreni, a koordinator odmah odlučuje
+      // (blokada dok se ugovor ne izmeni ili otkaz). Kupovina se ne blokira sama.
+      const negative = dto.conclusion === 'DO_NOT_SIGN';
       emails = await this.notifications.notify(
         manager,
         [...new Set(recipients)].map((userId) => ({
           userId,
-          type: 'legal-opinion.created',
-          title: 'Pravno mišljenje je spremno',
-          body: `Advokat je dao pravno mišljenje: ${labels[dto.conclusion]}.`,
+          type: negative ? 'legal-opinion.negative' : 'legal-opinion.created',
+          title: negative ? 'Advokat ne preporučuje potpis ugovora' : 'Pravno mišljenje je spremno',
+          body: negative
+            ? userId === purchase.coordinatorId
+              ? 'Pravno mišljenje glasi „ne potpisati”. Koraci ugovora su zatvoreni; odlučite da li kupovinu blokirate dok se ugovor ne izmeni ili je otkazujete.'
+              : 'Pravno mišljenje glasi „ne potpisati”. Ugovor se ne potpisuje dok se ne izmeni; koordinator će vas obavestiti o sledećem koraku.'
+            : `Advokat je dao pravno mišljenje: ${labels[dto.conclusion]}.`,
           link: `/purchases/${purchase.id}`,
         })),
       );

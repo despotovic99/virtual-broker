@@ -7,6 +7,7 @@ import type { MarketCode } from '../../markets/market-code.js';
 import type { AuthUser } from '../access/auth-user.js';
 import { assertMarketAccess } from '../access/market-access.js';
 import { Role } from '../access/role.enum.js';
+import { auditChanges, auditInitial } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
 import { administeredMarkets } from '../users/admin-scope.js';
 import { UsersService } from '../users/users.service.js';
@@ -131,19 +132,23 @@ export class LegalTeamsAdminService {
     await queryRunner.connect();
     await queryRunner.startTransaction();
     try {
-      const id = await this.teams.insertTeam(queryRunner.manager, {
-        market: dto.market,
+      const values = {
         name: dto.name.trim(),
         languages: [...dto.languages],
         conflictDeveloperIds: [...dto.conflictDeveloperIds],
-      });
+      };
+      const id = await this.teams.insertTeam(queryRunner.manager, { market: dto.market, ...values });
       await this.audit.record(queryRunner.manager, {
         market: dto.market,
         actorId: actor.id,
         action: 'legal-team.created',
         entityType: 'legal_team',
         entityId: id,
-        data: { name: dto.name.trim(), conflictDevelopers: dto.conflictDeveloperIds.length },
+        data: {
+          name: values.name,
+          conflictDevelopers: dto.conflictDeveloperIds.length,
+          changes: auditInitial({ ...values, active: true }, ['name', 'languages', 'conflictDeveloperIds', 'active']),
+        },
       });
       const team = await this.loadTeam(queryRunner.manager, id);
       await queryRunner.commitTransaction();
@@ -162,24 +167,20 @@ export class LegalTeamsAdminService {
     await queryRunner.startTransaction();
     try {
       const team = await this.lockAdministeredTeam(queryRunner.manager, actor, teamId);
-      await this.teams.updateTeam(queryRunner.manager, team.id, {
+      const patch: Partial<LegalTeam> = {
         ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
         ...(dto.languages !== undefined ? { languages: [...dto.languages] } : {}),
         ...(dto.conflictDeveloperIds !== undefined ? { conflictDeveloperIds: [...dto.conflictDeveloperIds] } : {}),
         ...(dto.active !== undefined ? { active: dto.active } : {}),
-      });
+      };
+      await this.teams.updateTeam(queryRunner.manager, team.id, patch);
       await this.audit.record(queryRunner.manager, {
         market: team.market,
         actorId: actor.id,
         action: 'legal-team.updated',
         entityType: 'legal_team',
         entityId: team.id,
-        data: {
-          nameChanged: dto.name !== undefined,
-          languages: dto.languages ?? null,
-          conflictDevelopers: dto.conflictDeveloperIds ? dto.conflictDeveloperIds.length : null,
-          active: dto.active ?? null,
-        },
+        data: { changes: auditChanges(team, patch, ['name', 'languages', 'conflictDeveloperIds', 'active']) },
       });
       const updated = await this.loadTeam(queryRunner.manager, team.id);
       await queryRunner.commitTransaction();
@@ -213,11 +214,12 @@ export class LegalTeamsAdminService {
           : dto.licenseVerified
             ? (current?.licenseVerifiedAt ?? new Date())
             : null;
+      const licenseNumber = dto.licenseNumber?.trim() ?? current?.licenseNumber ?? null;
       await this.teams.upsertMember(queryRunner.manager, {
         teamId: team.id,
         userId,
         teamRole: dto.teamRole,
-        licenseNumber: dto.licenseNumber?.trim() ?? current?.licenseNumber ?? null,
+        licenseNumber,
         licenseVerifiedAt,
       });
       await this.audit.record(queryRunner.manager, {
@@ -226,7 +228,22 @@ export class LegalTeamsAdminService {
         action: 'legal-team.member.upserted',
         entityType: 'legal_team',
         entityId: team.id,
-        data: { userId, teamRole: dto.teamRole, licenseVerified: licenseVerifiedAt !== null },
+        data: {
+          teamId: team.id,
+          userId,
+          teamRole: dto.teamRole,
+          licenseVerified: licenseVerifiedAt !== null,
+          // Nov član: sve stare vrednosti su null.
+          changes: auditChanges<{ teamRole: string | null; licenseNumber: string | null; licenseVerified: boolean | null }>(
+            {
+              teamRole: current?.teamRole ?? null,
+              licenseNumber: current?.licenseNumber ?? null,
+              licenseVerified: current ? current.licenseVerifiedAt !== null : null,
+            },
+            { teamRole: dto.teamRole, licenseNumber, licenseVerified: licenseVerifiedAt !== null },
+            ['teamRole', 'licenseNumber', 'licenseVerified'],
+          ),
+        },
       });
       const updated = await this.loadTeam(queryRunner.manager, team.id);
       await queryRunner.commitTransaction();
@@ -245,6 +262,7 @@ export class LegalTeamsAdminService {
     await queryRunner.startTransaction();
     try {
       const team = await this.lockAdministeredTeam(queryRunner.manager, actor, teamId);
+      const removed = team.members?.find((member) => member.userId === userId);
       await this.teams.removeMember(queryRunner.manager, team.id, userId);
       await this.audit.record(queryRunner.manager, {
         market: team.market,
@@ -252,7 +270,11 @@ export class LegalTeamsAdminService {
         action: 'legal-team.member.removed',
         entityType: 'legal_team',
         entityId: team.id,
-        data: { userId },
+        data: {
+          teamId: team.id,
+          userId,
+          changes: removed ? { teamRole: { from: removed.teamRole, to: null } } : undefined,
+        },
       });
       const updated = await this.loadTeam(queryRunner.manager, team.id);
       await queryRunner.commitTransaction();

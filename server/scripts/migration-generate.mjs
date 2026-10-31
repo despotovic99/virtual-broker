@@ -1,5 +1,6 @@
 // Pravi novu migraciju iz razlike između entiteta i baze. Ne pokreće migracije.
-// Upotreba: npm run migration:generate  (pa uneti naziv kada se zatraži)
+// Upotreba (iz root-a projekta): docker compose exec api npm run migration:generate
+// pa uneti naziv kada se zatraži.
 import { execFileSync } from 'node:child_process';
 import { stdin as input, stdout as output } from 'node:process';
 import { createInterface } from 'node:readline/promises';
@@ -22,12 +23,12 @@ async function askName() {
 const name = await askName();
 const run = (command, args) => execFileSync(command, args, { stdio: 'inherit' });
 
-// Uvek sveži build: briše se prethodni dist-migrations, pa se pravi nov.
-run('npm', ['run', 'build:migrations']);
+// Uvek sveži build: briše se dist, pa se pravi nov.
+run('npm', ['run', 'build:dev']);
 run('typeorm', [
   'migration:generate',
   `src/database/migrations/${name}`,
   '-d',
-  'dist-migrations/database/data-source.js',
+  'dist/database/data-source.js',
   '--pretty',
 ]);

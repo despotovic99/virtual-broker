@@ -1,10 +1,11 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Put } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Put, Query } from '@nestjs/common';
+import { PaginationQueryDto } from '../../common/pagination/pagination.js';
 import { RequireCapabilities } from '../access/access.decorators.js';
 import type { AuthUser } from '../access/auth-user.js';
 import { Capability } from '../access/capability.enum.js';
 import { CurrentUser } from '../access/current-user.decorator.js';
 import { ConfirmConditionDto, RecordPaymentDto, ReplacePaymentPlanDto, ReturnInstructionDto } from './dto/payments.dto.js';
-import { EscrowService, type EscrowInstructionResponse } from './escrow.service.js';
+import { EscrowService, type EscrowInstructionListResponse, type EscrowInstructionResponse } from './escrow.service.js';
 import type { InstallmentResponse, PaymentPlanResponse } from './payments.mapper.js';
 import { PaymentsService } from './payments.service.js';
 import { ParseConditionCodePipe } from './parse-condition-code.pipe.js';
@@ -58,8 +59,8 @@ export class PaymentsController {
   /** Naš tim vidi instrukcije svog tržišta, escrow partner samo svoje kupovine. */
   @Get('escrow/instructions')
   @RequireCapabilities(Capability.PaymentsRead)
-  listInstructions(@CurrentUser() actor: AuthUser): Promise<EscrowInstructionResponse[]> {
-    return this.escrow.list(actor);
+  listInstructions(@CurrentUser() actor: AuthUser, @Query() query: PaginationQueryDto): Promise<EscrowInstructionListResponse> {
+    return this.escrow.list(actor, query);
   }
 
   @Post('escrow/instructions/:id/approve')

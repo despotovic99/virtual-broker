@@ -1,18 +1,15 @@
-import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsIn,
-  IsInt,
   IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
   Length,
   Matches,
-  Max,
-  Min,
   ValidateIf,
 } from 'class-validator';
+import { PaginationQueryDto } from '../../../common/pagination/pagination.js';
 import { MARKET_CODES, type MarketCode } from '../../../markets/market-code.js';
 import { PURCHASE_STATUSES, type PurchaseStatus } from '../entities/purchase.entity.js';
 import { TASK_STATUSES, type TaskStatus } from '../entities/purchase-task.entity.js';
@@ -28,11 +25,13 @@ export class CreatePurchaseDto {
   @IsUUID()
   buyerId?: string;
 
+  /** Obavezno ako nema zahteva ili zahtev nije povezan sa stanom. Ako ima zahteva, podrazumevano je stan iz zahteva. */
+  @IsOptional()
   @IsUUID()
-  unitId: string;
+  unitId?: string;
 }
 
-export class ListPurchasesQueryDto {
+export class ListPurchasesQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn([...PURCHASE_STATUSES])
   status?: PurchaseStatus;
@@ -40,19 +39,6 @@ export class ListPurchasesQueryDto {
   @IsOptional()
   @IsIn([...MARKET_CODES])
   market?: MarketCode;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  limit = 50;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset = 0;
 }
 
 /**

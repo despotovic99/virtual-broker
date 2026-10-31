@@ -1,5 +1,4 @@
 import type { FeatureRoute, NavItem } from '../../core/layout/nav.ts'
-import './buyer.css'
 import { CostsPage } from './CostsPage.tsx'
 import { NewRequestPage } from './NewRequestPage.tsx'
 import { ProfilePage } from './ProfilePage.tsx'
@@ -11,10 +10,10 @@ import { RequestsPage } from './RequestsPage.tsx'
 // Ekrani kupca: zahtevi i besplatni semafor (F-35), projekti (F-04), profil (F-03, F-11) i troškovi (F-09, F-10).
 // Meni „Projekti” se vezuje za requests:create, da ga vide samo kupci (tim ima svoj katalog).
 export const buyerNav: NavItem[] = [
-  { to: '/requests', label: 'nav.requests', anyOf: ['requests:create'], order: 10 },
-  { to: '/projects', label: 'nav.projects', anyOf: ['requests:create'], order: 20 },
-  { to: '/profile', label: 'nav.profile', anyOf: ['buyer-profile:manage'], order: 40 },
-  { to: '/costs', label: 'nav.costs', anyOf: ['buyer-profile:manage'], order: 50 },
+  { to: '/requests', label: 'nav.requests', anyOf: ['requests:create'], order: 10, icon: 'doc', group: 'buyer' },
+  { to: '/projects', label: 'nav.projects', anyOf: ['requests:create'], order: 20, icon: 'building', group: 'buyer' },
+  { to: '/profile', label: 'nav.profile', anyOf: ['buyer-profile:manage'], order: 40, icon: 'user', group: 'buyer' },
+  { to: '/costs', label: 'nav.costs', anyOf: ['buyer-profile:manage'], order: 50, icon: 'calculator', group: 'buyer' },
 ]
 
 export const buyerRoutes: FeatureRoute[] = [

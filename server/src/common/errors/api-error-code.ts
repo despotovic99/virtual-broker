@@ -57,6 +57,7 @@ export enum ApiErrorCode {
 
   // Novac
   PaymentConditionsNotMet = 'PAYMENT_CONDITIONS_NOT_MET',
+  PaymentPlanTotalMismatch = 'PAYMENT_PLAN_TOTAL_MISMATCH',
   BankAccountNotVerified = 'BANK_ACCOUNT_NOT_VERIFIED',
   EscrowNotUsed = 'ESCROW_NOT_USED',
   EscrowSameApprover = 'ESCROW_SAME_APPROVER',
@@ -158,6 +159,10 @@ export const API_ERRORS: Readonly<Record<ApiErrorCode, ApiErrorDefinition>> = {
   [ApiErrorCode.PaymentConditionsNotMet]: {
     status: HttpStatus.CONFLICT,
     message: 'Uplata je zaključana dok nisu ispunjeni svi uslovi.',
+  },
+  [ApiErrorCode.PaymentPlanTotalMismatch]: {
+    status: HttpStatus.BAD_REQUEST,
+    message: 'Zbir rata mora biti jednak ceni stana iz kupovine.',
   },
   [ApiErrorCode.BankAccountNotVerified]: {
     status: HttpStatus.CONFLICT,

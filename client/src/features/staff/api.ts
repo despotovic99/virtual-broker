@@ -1,4 +1,4 @@
-import { api, download, query, upload } from '../../core/api/http.ts'
+import { api, download, query, upload, type Page, type PageParams } from '../../core/api/http.ts'
 import type { MarketCode, Role } from '../../core/auth/capabilities.ts'
 import type {
   AdminUser,
@@ -29,9 +29,9 @@ import type {
 /** Pozivi back-office API-ja (sve pod /api). */
 export const staffApi = {
   // Zahtevi (F-35)
-  queue: (params: { status?: RequestStatus | ''; market?: MarketCode | '' }) =>
-    api<BuyerRequest[]>(`/requests/queue${query(params)}`),
-  legalQueue: () => api<BuyerRequest[]>('/requests/legal-queue'),
+  queue: (params: { status?: RequestStatus | ''; market?: MarketCode | '' } & PageParams) =>
+    api<Page<BuyerRequest>>(`/requests/queue${query({ ...params })}`),
+  legalQueue: (page: PageParams) => api<Page<BuyerRequest>>(`/requests/legal-queue${query({ ...page })}`),
   request: (id: string) => api<BuyerRequest>(`/requests/${id}`),
   takeRequest: (id: string) => api<BuyerRequest>(`/requests/${id}/take`, { method: 'POST' }),
   linkRequest: (id: string, body: { developerId?: string; projectId?: string; unitId?: string }) =>
@@ -44,7 +44,8 @@ export const staffApi = {
   closeRequest: (id: string) => api<BuyerRequest>(`/requests/${id}/close`, { method: 'POST' }),
 
   // Katalog (F-04, F-32)
-  developers: (params: { market?: MarketCode | ''; search?: string }) => api<Developer[]>(`/catalog/developers${query(params)}`),
+  developers: (params: { market?: MarketCode | ''; search?: string } & PageParams) =>
+    api<Page<Developer>>(`/catalog/developers${query({ ...params })}`),
   createDeveloper: (body: {
     market: MarketCode
     name: string
@@ -61,7 +62,7 @@ export const staffApi = {
   verifyBankAccount: (id: string, note: string) =>
     api<BankAccount>(`/catalog/bank-accounts/${id}/verify`, { method: 'POST', body: { note } }),
   projects: (params: { market?: MarketCode | ''; city?: string; developerId?: string; limit?: number; offset?: number }) =>
-    api<{ items: Project[]; total: number; limit: number; offset: number }>(`/catalog/projects${query(params)}`),
+    api<Page<Project>>(`/catalog/projects${query(params)}`),
   project: (id: string) => api<ProjectDetail>(`/catalog/projects/${id}`),
   createProject: (body: {
     developerId: string
@@ -102,14 +103,14 @@ export const staffApi = {
     summary: string
     documentId?: string
   }) => api<CheckHistoryItem>('/checks', { method: 'POST', body }),
-  checkHistory: (target: { developerId?: string; projectId?: string }) =>
-    api<CheckHistoryItem[]>(`/checks/history${query({ ...target, limit: 100 })}`),
+  checkHistory: (target: { developerId?: string; projectId?: string }, page: PageParams) =>
+    api<Page<CheckHistoryItem>>(`/checks/history${query({ ...target, ...page })}`),
   developerSemaphore: (id: string) => api<SemaphoreResult>(`/checks/developers/${id}/semaphore`),
   projectSemaphore: (id: string) => api<ProjectSemaphore>(`/checks/projects/${id}/semaphore`),
 
   // Dokumenta (F-02)
-  documents: (owner: { projectId?: string; developerId?: string; reportId?: string }) =>
-    api<DocumentItem[]>(`/documents${query(owner)}`),
+  documents: (owner: { projectId?: string; developerId?: string; reportId?: string }, page: PageParams) =>
+    api<Page<DocumentItem>>(`/documents${query({ ...owner, ...page })}`),
   uploadDocument: (
     owner: { scope: 'PROJECT'; projectId: string } | { scope: 'DEVELOPER'; developerId: string },
     typeCode: string,
@@ -129,9 +130,17 @@ export const staffApi = {
   construction: (projectId: string) => api<Construction>(`/projects/${projectId}/construction`),
   updatePlan: (projectId: string, phases: { phaseCode: string; plannedDate: string | null }[]) =>
     api<Construction>(`/projects/${projectId}/construction/plan`, { method: 'PUT', body: { phases } }),
-  reports: (projectId: string) => api<EngineerReport[]>(`/projects/${projectId}/reports`),
-  createReport: (projectId: string, body: { phaseCode?: string; visitDate: string; summary: string; verdict: ReportVerdict }) =>
-    api<EngineerReport>(`/projects/${projectId}/reports`, { method: 'POST', body }),
+  reports: (projectId: string, page: PageParams) => api<Page<EngineerReport>>(`/projects/${projectId}/reports${query({ ...page })}`),
+  /** Izveštaj sa prilozima u jednom zahtevu (izveštaj i fajlovi nastaju zajedno ili nijedno). */
+  createReport: (projectId: string, body: { phaseCode?: string; visitDate: string; summary: string; verdict: ReportVerdict }, files: File[] = []) => {
+    const form = new FormData()
+    if (body.phaseCode) form.set('phaseCode', body.phaseCode)
+    form.set('visitDate', body.visitDate)
+    form.set('summary', body.summary)
+    form.set('verdict', body.verdict)
+    for (const file of files) form.append('files', file)
+    return upload<EngineerReport>(`/projects/${projectId}/reports`, form)
+  },
   addReportFile: (reportId: string, file: File) => {
     const form = new FormData()
     form.set('file', file)
@@ -139,7 +148,7 @@ export const staffApi = {
   },
 
   // Escrow (F-15)
-  escrowInstructions: () => api<EscrowInstruction[]>('/escrow/instructions'),
+  escrowInstructions: (page: PageParams) => api<Page<EscrowInstruction>>(`/escrow/instructions${query({ ...page })}`),
   approveInstruction: (id: string) => api<EscrowInstruction>(`/escrow/instructions/${id}/approve`, { method: 'POST' }),
   executeInstruction: (id: string) => api<EscrowInstruction>(`/escrow/instructions/${id}/execute`, { method: 'POST' }),
   returnInstruction: (id: string, reason: string) =>
@@ -148,6 +157,7 @@ export const staffApi = {
   // Administracija
   users: (params: { role?: Role | ''; market?: MarketCode | ''; search?: string; limit?: number; offset?: number }) =>
     api<UserList>(`/users${query(params)}`),
+  user: (id: string) => api<AdminUser>(`/users/${id}`),
   createUser: (body: {
     email: string
     password: string
@@ -175,5 +185,5 @@ export const staffApi = {
   ) => api<LegalTeam>(`/legal-teams/${teamId}/members/${userId}`, { method: 'PUT', body }),
   removeMember: (teamId: string, userId: string) =>
     api<LegalTeam>(`/legal-teams/${teamId}/members/${userId}`, { method: 'DELETE' }),
-  audit: (params: { entityType?: string; entityId?: string; limit?: number }) => api<AuditEvent[]>(`/audit${query(params)}`),
+  audit: (params: { entityType?: string; entityId?: string } & PageParams) => api<Page<AuditEvent>>(`/audit${query({ ...params })}`),
 }

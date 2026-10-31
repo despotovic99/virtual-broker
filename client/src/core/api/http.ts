@@ -126,3 +126,17 @@ export function query(params: Record<string, string | number | boolean | null | 
   const text = search.toString()
   return text ? `?${text}` : ''
 }
+
+/** Jedna strana liste sa servera (server/src/common/pagination). */
+export interface Page<T> {
+  items: T[]
+  total: number
+  limit: number
+  offset: number
+}
+
+/** Parametri strane koje šalje klijent. */
+export interface PageParams {
+  limit: number
+  offset: number
+}

@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { api, query } from '../../core/api/http.ts'
 import { MARKETS, type MarketCode } from '../../core/auth/capabilities.ts'
 import { useI18n, useLocalT } from '../../core/i18n/I18nContext.tsx'
-import { Card, Empty, ErrorBox, Field, Loading, Page, StatusBadge } from '../../ui/components.tsx'
+import { Button, Card, Chip, Empty, ErrorBox, ErrorState, Field, FormSection, InfoTip, Loading, Notice, Page, Segmented } from '../../ui/components.tsx'
+import { Icon, type IconName } from '../../ui/icons.tsx'
 import { useAsync } from '../../ui/useAsync.ts'
 import { buyerDictionary } from './i18n.ts'
 import type { BuyerProfile, LegalFinding } from './types.ts'
@@ -29,6 +30,12 @@ function toForm(profile: BuyerProfile): ProfileForm {
   }
 }
 
+const FINDING_ICON: Record<LegalFinding['level'], IconName> = {
+  INFO: 'info',
+  WARNING: 'warn',
+  BLOCKER: 'critical',
+}
+
 /** Pravne napomene za izabrano tržište, na osnovu sačuvanog upitnika (F-11). */
 function LegalFindings({ version }: { version: number }) {
   const { t, l } = useI18n()
@@ -40,31 +47,36 @@ function LegalFindings({ version }: { version: number }) {
     <Card
       title={bt('profile.findings')}
       actions={
-        <select aria-label={t('common.market')} value={market} onChange={(event) => setMarket(event.target.value === 'CY' ? 'CY' : 'RS')}>
-          {MARKETS.map((code) => (
-            <option key={code} value={code}>
-              {t(`market.${code}`)}
-            </option>
-          ))}
-        </select>
+        <Segmented
+          label={t('common.market')}
+          value={market}
+          onChange={setMarket}
+          options={MARKETS.map((code) => ({ value: code, label: t(`market.${code}`) }))}
+        />
       }
     >
-      <ErrorBox error={findings.error} />
-      {findings.loading && !findings.data && <Loading />}
-      {findings.data && findings.data.length === 0 && <Empty text={bt('profile.findingsEmpty')} />}
-      {findings.data?.map((finding) => (
-        <div key={finding.code} className={`buyer-finding buyer-finding-${finding.level}`}>
-          <div className="row">
-            <StatusBadge
-              text={bt(`profile.level${finding.level}`)}
-              tone={finding.level === 'BLOCKER' ? 'bad' : finding.level === 'WARNING' ? 'warn' : 'neutral'}
-            />
-            <strong>{l(finding.title)}</strong>
+      <div className="stack">
+        <ErrorBox error={findings.error} onRetry={findings.reload} />
+        {findings.loading && !findings.data && <Loading inline rows={2} />}
+        {findings.data && findings.data.length === 0 && <Empty text={bt('profile.findingsEmpty')} />}
+        {findings.data && findings.data.length > 0 && (
+          <div>
+            {findings.data.map((finding) => (
+              <div key={finding.code} className={`finding finding--${finding.level}`}>
+                <span className="finding__icon">
+                  <Icon name={FINDING_ICON[finding.level]} size={15} />
+                </span>
+                <div className="finding__body">
+                  <strong className="finding__title">{l(finding.title)}</strong>
+                  <span>{l(finding.text)}</span>
+                  <span className="meta">{bt(`profile.level${finding.level}`)}</span>
+                </div>
+              </div>
+            ))}
           </div>
-          <p>{l(finding.text)}</p>
-        </div>
-      ))}
-      <p className="muted">{bt('profile.findingsNote')}</p>
+        )}
+        <Notice tone="plain">{bt('profile.findingsNote')}</Notice>
+      </div>
     </Card>
   )
 }
@@ -117,74 +129,129 @@ export function ProfilePage() {
   }
 
   return (
-    <Page title={bt('profile.title')}>
-      <Card>
-        <p className="muted">{bt('profile.intro')}</p>
-        <ErrorBox error={profile.error} />
-        {profile.loading && !form && <Loading />}
-        {form && (
-          <form onSubmit={(event) => void onSubmit(event)} noValidate>
-            <div className="buyer-checks">
-              <label>
-                <input type="checkbox" checked={form.isFirstHome} onChange={(event) => update({ isFirstHome: event.target.checked })} />
-                {bt('profile.isFirstHome')}
-              </label>
-              <label>
-                <input type="checkbox" checked={form.isEuCitizen} onChange={(event) => update({ isEuCitizen: event.target.checked })} />
-                {bt('profile.isEuCitizen')}
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={form.primaryResidence}
-                  onChange={(event) => update({ primaryResidence: event.target.checked })}
-                />
-                {bt('profile.primaryResidence')}
-              </label>
-            </div>
-            <div className="buyer-filters">
-              <Field label={bt('profile.financing')}>
-                <select
-                  value={form.financing}
-                  onChange={(event) => update({ financing: event.target.value === 'MORTGAGE' ? 'MORTGAGE' : 'CASH' })}
-                >
-                  <option value="CASH">{bt('profile.cash')}</option>
-                  <option value="MORTGAGE">{bt('profile.mortgage')}</option>
-                </select>
-              </Field>
-              <Field label={bt('profile.age')} hint={t('common.optional')}>
-                <input
-                  inputMode="numeric"
-                  value={form.age}
-                  onChange={(event) => update({ age: event.target.value.replace(/\D/g, '').slice(0, 3) })}
-                />
-              </Field>
-              <Field label={bt('profile.householdMembers')}>
-                <input
-                  inputMode="numeric"
-                  value={form.householdMembers}
-                  onChange={(event) => update({ householdMembers: event.target.value.replace(/\D/g, '').slice(0, 2) })}
-                />
-              </Field>
-              <Field label={bt('profile.budget')} hint={t('common.optional')}>
-                <input
-                  inputMode="numeric"
-                  value={form.budget}
-                  onChange={(event) => update({ budget: event.target.value.replace(/\D/g, '').slice(0, 9) })}
-                />
-              </Field>
-            </div>
-            <ErrorBox error={error} />
-            <div className="row">
-              <button type="submit" className="primary" disabled={saving}>
-                {t('common.save')}
-              </button>
-              {saved && <span className="muted">{bt('profile.saved')}</span>}
-            </div>
-          </form>
-        )}
-      </Card>
-      <LegalFindings version={version} />
+    <Page title={bt('profile.title')} meta={<span className="page-description">{bt('form.profile.description')}</span>}>
+      <div className="layout-aside">
+        <div className="layout-aside__main">
+          {profile.error && !form ? (
+            <ErrorState error={profile.error} onRetry={profile.reload} />
+          ) : !form ? (
+            <Card>
+              <Loading inline />
+            </Card>
+          ) : (
+            <form className="card form-page__card" onSubmit={(event) => void onSubmit(event)} noValidate>
+              <div className="form-page__body">
+                <FormSection title={bt('form.profile.statusTitle')} description={bt('form.profile.statusHint')} columns={1}>
+                  <div className="checks">
+                    <label className="check">
+                      <input type="checkbox" checked={form.isFirstHome} onChange={(event) => update({ isFirstHome: event.target.checked })} />
+                      {bt('profile.isFirstHome')}
+                      <InfoTip text={bt('form.profile.firstHomeInfo')} />
+                    </label>
+                    <label className="check">
+                      <input type="checkbox" checked={form.isEuCitizen} onChange={(event) => update({ isEuCitizen: event.target.checked })} />
+                      {bt('profile.isEuCitizen')}
+                      <InfoTip text={bt('form.profile.euInfo')} />
+                    </label>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={form.primaryResidence}
+                        onChange={(event) => update({ primaryResidence: event.target.checked })}
+                      />
+                      {bt('profile.primaryResidence')}
+                      <InfoTip text={bt('form.profile.residenceInfo')} />
+                    </label>
+                  </div>
+                </FormSection>
+
+                <FormSection title={bt('form.profile.financingTitle')} description={bt('form.profile.financingHint')}>
+                  <fieldset>
+                    <legend>
+                      <span className="row">
+                        {bt('profile.financing')}
+                        <InfoTip text={bt('form.profile.financingInfo')} />
+                      </span>
+                    </legend>
+                    <div className="checks checks--inline">
+                      <label className="check">
+                        <input
+                          type="radio"
+                          name="financing"
+                          value="CASH"
+                          checked={form.financing === 'CASH'}
+                          onChange={() => update({ financing: 'CASH' })}
+                        />
+                        {bt('profile.cash')}
+                      </label>
+                      <label className="check">
+                        <input
+                          type="radio"
+                          name="financing"
+                          value="MORTGAGE"
+                          checked={form.financing === 'MORTGAGE'}
+                          onChange={() => update({ financing: 'MORTGAGE' })}
+                        />
+                        {bt('profile.mortgage')}
+                      </label>
+                    </div>
+                  </fieldset>
+                  <Field label={bt('profile.age')} info={bt('form.profile.ageInfo')} hint={t('common.optional')} suffix={bt('form.profile.ageSuffix')}>
+                    <input
+                      className="num"
+                      inputMode="numeric"
+                      value={form.age}
+                      onChange={(event) => update({ age: event.target.value.replace(/\D/g, '').slice(0, 3) })}
+                    />
+                  </Field>
+                </FormSection>
+
+                <FormSection title={bt('form.profile.householdTitle')} description={bt('form.profile.householdHint')}>
+                  <Field label={bt('profile.householdMembers')} required info={bt('form.profile.householdInfo')}>
+                    <input
+                      className="num"
+                      inputMode="numeric"
+                      value={form.householdMembers}
+                      onChange={(event) => update({ householdMembers: event.target.value.replace(/\D/g, '').slice(0, 2) })}
+                    />
+                  </Field>
+                  <Field label={bt('form.profile.budget')} info={bt('form.profile.budgetInfo')} hint={t('common.optional')} suffix="€">
+                    <input
+                      className="num"
+                      inputMode="numeric"
+                      value={form.budget}
+                      onChange={(event) => update({ budget: event.target.value.replace(/\D/g, '').slice(0, 9) })}
+                    />
+                  </Field>
+                </FormSection>
+
+                {Boolean(error) && (
+                  <div className="form-page__error">
+                    <ErrorBox error={error} />
+                  </div>
+                )}
+              </div>
+              <div className="form-page__footer">
+                <span className="form-page__footer-note">
+                  {saved ? (
+                    <Chip tone="ok" icon="check">
+                      {bt('profile.saved')}
+                    </Chip>
+                  ) : (
+                    <span className="muted small">{t('form.requiredNote')}</span>
+                  )}
+                </span>
+                <Button type="submit" variant="primary" busy={saving}>
+                  {t('common.save')}
+                </Button>
+              </div>
+            </form>
+          )}
+        </div>
+        <div className="layout-aside__side">
+          <LegalFindings version={version} />
+        </div>
+      </div>
     </Page>
   )
 }

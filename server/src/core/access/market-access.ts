@@ -22,3 +22,8 @@ export function hasRole(actor: AuthUser, ...roles: Role[]): boolean {
 export function isInternalOnMarket(actor: AuthUser, market: MarketCode): boolean {
   return hasRole(actor, Role.Admin, Role.Analyst, Role.Coordinator) && hasMarketAccess(actor, market);
 }
+
+/** Admin na datom tržištu: prolazi sve provere uloge i veze (osim pravila četiri oka). */
+export function isAdminOnMarket(actor: AuthUser, market: MarketCode): boolean {
+  return hasRole(actor, Role.Admin) && hasMarketAccess(actor, market);
+}

@@ -3,12 +3,15 @@ import { DataSource } from 'typeorm';
 import { ApiErrorCode } from '../../common/errors/api-error-code.js';
 import { ApiError } from '../../common/errors/api-error.js';
 import { throwApiError } from '../../common/errors/throw-api-error.js';
+import { toPage, type Page, type PaginationQueryDto } from '../../common/pagination/pagination.js';
 import type { Localized } from '../../markets/market-pack.js';
 import { MarketRegistry } from '../../markets/market-registry.js';
 import type { AuthUser } from '../access/auth-user.js';
-import { hasMarketAccess, hasRole, isInternalOnMarket } from '../access/market-access.js';
+import { hasMarketAccess, hasRole, isAdminOnMarket, isInternalOnMarket } from '../access/market-access.js';
 import { Role } from '../access/role.enum.js';
+import { auditInitial } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
+import type { AuditChange } from '../audit/entities/audit-event.entity.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import type { Project } from '../catalog/entities/project.entity.js';
 import { DocumentsService, toDocumentResponse, type DocumentResponse, type StoredFile } from '../documents/documents.service.js';
@@ -50,6 +53,8 @@ export interface EngineerReportResponse {
   createdAt: string;
 }
 
+export type EngineerReportListResponse = Page<EngineerReportResponse>;
+
 function toReportResponse(report: EngineerReport): EngineerReportResponse {
   return {
     id: report.id,
@@ -61,6 +66,14 @@ function toReportResponse(report: EngineerReport): EngineerReportResponse {
     verdict: report.verdict,
     createdAt: report.createdAt.toISOString(),
   };
+}
+
+/** Najviše priloga uz jedan izveštaj (u istom zahtevu). */
+export const MAX_REPORT_FILES = 10;
+
+/** PDF je izveštaj, slika je fotografija sa gradilišta. */
+function reportFileType(mimeType: string): string {
+  return mimeType === 'application/pdf' ? 'REPORT_PDF' : 'REPORT_PHOTO';
 }
 
 function today(): string {
@@ -114,8 +127,11 @@ export class ConstructionService {
         .filter((field): field is string => field !== null);
       if (invalid.length > 0) throw new ApiError(ApiErrorCode.ValidationFailed, { fields: invalid });
 
+      const changes: Record<string, AuditChange> = {};
       for (const item of dto.phases) {
         const existing = await this.construction.phaseForUpdate(queryRunner.manager, project.id, item.phaseCode);
+        const previousDate = existing?.plannedDate ?? null;
+        if (previousDate !== item.plannedDate) changes[`phase.${item.phaseCode}.plannedDate`] = { from: previousDate, to: item.plannedDate };
         if (existing) {
           await this.construction.updatePhase(queryRunner.manager, existing.id, { plannedDate: item.plannedDate });
         } else {
@@ -134,7 +150,12 @@ export class ConstructionService {
         action: 'construction.plan.updated',
         entityType: 'project',
         entityId: project.id,
-        data: { phases: dto.phases.map((phase) => phase.phaseCode) },
+        data: {
+          projectId: project.id,
+          developerId: project.developerId,
+          phases: dto.phases.map((phase) => phase.phaseCode),
+          changes: Object.keys(changes).length > 0 ? changes : undefined,
+        },
       });
       const phases = await this.construction.phasesForProject(queryRunner.manager, project.id);
       await queryRunner.commitTransaction();
@@ -148,20 +169,40 @@ export class ConstructionService {
   }
 
   /** Izveštaj inženjera sa obilaska. PHASE_CONFIRMED potvrđuje fazu i otključava rate te faze. */
-  async createReport(actor: AuthUser, projectId: string, dto: CreateEngineerReportDto): Promise<EngineerReportResponse> {
+  /**
+   * Izveštaj sa obilaska, opciono sa prilozima (fotografije, PDF). Izveštaj,
+   * prilozi, faza i audit su jedna transakcija: ako bilo šta ne uspe, ne
+   * ostaje ni izveštaj ni fajlovi (već otpremljeni fajlovi se brišu iz skladišta).
+   */
+  async createReport(
+    actor: AuthUser,
+    projectId: string,
+    dto: CreateEngineerReportDto,
+    uploads: UploadedFileData[] = [],
+  ): Promise<EngineerReportResponse> {
     if (dto.visitDate > today()) throw new ApiError(ApiErrorCode.ValidationFailed, { fields: ['visitDate'] });
     const decidesPhase = dto.verdict === 'PHASE_CONFIRMED' || dto.verdict === 'PHASE_REJECTED';
     if (decidesPhase && !dto.phaseCode) throw new ApiError(ApiErrorCode.ValidationFailed, { fields: ['phaseCode'] });
+    if (uploads.length > MAX_REPORT_FILES) throw new ApiError(ApiErrorCode.ValidationFailed, { fields: ['files'] });
+    // Sadržaj i veličina fajlova se proveravaju pre otvaranja konekcije.
+    const files = uploads.map((upload) => validateUploadedFile(upload));
+    const stored: { typeCode: string; file: StoredFile }[] = [];
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
-    await queryRunner.startTransaction();
     try {
       const project = await this.catalog.getProject(queryRunner.manager, projectId);
-      if (!hasRole(actor, Role.Engineer) || !hasMarketAccess(actor, project.market)) throw new ApiError(ApiErrorCode.NotFound);
+      if (!hasRole(actor, Role.Engineer, Role.Admin) || !hasMarketAccess(actor, project.market)) throw new ApiError(ApiErrorCode.NotFound);
       const definitions = this.markets.get(project.market).constructionPhases;
       const position = dto.phaseCode ? definitions.findIndex((definition) => definition.code === dto.phaseCode) + 1 : 0;
       if (dto.phaseCode && position === 0) throw new ApiError(ApiErrorCode.ValidationFailed, { fields: ['phaseCode'] });
+
+      // Fajlovi idu u skladište pre transakcije (kao kod dodavanja fajla uz izveštaj).
+      const typed = files.map((file) => ({ file, typeCode: reportFileType(file.mimeType) }));
+      for (const item of typed) this.documents.assertTypeAllowed(project.market, 'REPORT', item.typeCode);
+      for (const item of typed) stored.push({ typeCode: item.typeCode, file: await this.documents.putFile(project.market, 'REPORT', item.file) });
+
+      await queryRunner.startTransaction();
 
       const report = await this.construction.insertReport(queryRunner.manager, {
         market: project.market,
@@ -174,6 +215,7 @@ export class ConstructionService {
       });
 
       let drafts: NotificationDraft[] = [];
+      const phaseChanges: Record<string, AuditChange> = {};
       if (dto.phaseCode) {
         let phase = await this.construction.phaseForUpdate(queryRunner.manager, project.id, dto.phaseCode);
         if (!phase) {
@@ -189,6 +231,7 @@ export class ConstructionService {
         if (!phase) throw new ApiError(ApiErrorCode.InternalError);
         if (decidesPhase && phase.status === 'CONFIRMED') throw new ApiError(ApiErrorCode.InvalidStateTransition);
 
+        const statusKey = `phase.${dto.phaseCode}.status`;
         if (dto.verdict === 'PHASE_CONFIRMED') {
           await this.construction.updatePhase(queryRunner.manager, phase.id, {
             status: 'CONFIRMED',
@@ -196,12 +239,28 @@ export class ConstructionService {
             confirmedById: actor.id,
             confirmedAt: new Date(),
           });
+          phaseChanges[statusKey] = { from: phase.status, to: 'CONFIRMED' };
+          if (phase.actualDate !== dto.visitDate) {
+            phaseChanges[`phase.${dto.phaseCode}.actualDate`] = { from: phase.actualDate, to: dto.visitDate };
+          }
           drafts = await this.payments.onPhaseConfirmed(queryRunner.manager, project.id, dto.phaseCode, actor.id);
         } else if (dto.verdict === 'PHASE_REJECTED') {
           await this.construction.updatePhase(queryRunner.manager, phase.id, { status: 'REJECTED' });
+          if (phase.status !== 'REJECTED') phaseChanges[statusKey] = { from: phase.status, to: 'REJECTED' };
         } else if (phase.status === 'PLANNED') {
           await this.construction.updatePhase(queryRunner.manager, phase.id, { status: 'IN_PROGRESS' });
+          phaseChanges[statusKey] = { from: phase.status, to: 'IN_PROGRESS' };
         }
+      }
+
+      for (const item of stored) {
+        await this.documents.insert(
+          queryRunner.manager,
+          { market: project.market, scope: 'REPORT', purchaseId: null, projectId: project.id, developerId: null, reportId: report.id },
+          item.typeCode,
+          item.file,
+          actor.id,
+        );
       }
 
       await this.audit.record(queryRunner.manager, {
@@ -210,7 +269,14 @@ export class ConstructionService {
         action: 'construction.report.created',
         entityType: 'engineer_report',
         entityId: report.id,
-        data: { projectId: project.id, phaseCode: dto.phaseCode ?? null, verdict: dto.verdict },
+        data: {
+          projectId: project.id,
+          developerId: project.developerId,
+          phaseCode: dto.phaseCode ?? null,
+          verdict: dto.verdict,
+          files: stored.length,
+          changes: { ...auditInitial(report, ['phaseCode', 'visitDate', 'verdict', 'summary']), ...phaseChanges },
+        },
       });
       const emails = await this.notifications.notify(queryRunner.manager, drafts);
       await queryRunner.commitTransaction();
@@ -218,6 +284,7 @@ export class ConstructionService {
       return toReportResponse(report);
     } catch (error) {
       if (queryRunner.isTransactionActive) await queryRunner.rollbackTransaction();
+      for (const item of stored) await this.documents.discard(item.file);
       throwApiError(error);
     } finally {
       await queryRunner.release();
@@ -233,10 +300,11 @@ export class ConstructionService {
     await queryRunner.connect();
     try {
       const report = await this.construction.findReport(queryRunner.manager, reportId);
-      if (!report || report.engineerId !== actor.id || !hasMarketAccess(actor, report.market)) {
+      // Fajl uz izveštaj dodaje autor izveštaja ili admin na tržištu.
+      if (!report || (report.engineerId !== actor.id && !isAdminOnMarket(actor, report.market)) || !hasMarketAccess(actor, report.market)) {
         throw new ApiError(ApiErrorCode.NotFound);
       }
-      const typeCode = file.mimeType === 'application/pdf' ? 'REPORT_PDF' : 'REPORT_PHOTO';
+      const typeCode = reportFileType(file.mimeType);
       this.documents.assertTypeAllowed(report.market, 'REPORT', typeCode);
       stored = await this.documents.putFile(report.market, 'REPORT', file);
 
@@ -260,13 +328,13 @@ export class ConstructionService {
   }
 
   /** Izveštaji projekta. Fotografije: GET /documents?projectId=…&reportId=… */
-  async listReports(actor: AuthUser, projectId: string): Promise<EngineerReportResponse[]> {
+  async listReports(actor: AuthUser, projectId: string, query: PaginationQueryDto): Promise<EngineerReportListResponse> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     try {
       const project = await this.visibleProject(queryRunner.manager, actor, projectId);
-      const reports = await this.construction.listReports(queryRunner.manager, project.id);
-      return reports.map(toReportResponse);
+      const [reports, total] = await this.construction.listReports(queryRunner.manager, project.id, query);
+      return toPage(reports.map(toReportResponse), total, query);
     } catch (error) {
       throwApiError(error);
     } finally {

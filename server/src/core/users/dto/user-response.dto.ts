@@ -1,3 +1,4 @@
+import type { Page } from '../../../common/pagination/pagination.js';
 import type { MarketCode } from '../../../markets/market-code.js';
 import type { Role } from '../../access/role.enum.js';
 
@@ -15,9 +16,4 @@ export interface UserResponseDto {
   createdAt: string;
 }
 
-export interface UserListResponseDto {
-  items: UserResponseDto[];
-  total: number;
-  limit: number;
-  offset: number;
-}
+export type UserListResponseDto = Page<UserResponseDto>;

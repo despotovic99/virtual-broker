@@ -5,6 +5,7 @@ import { DataSource, type EntityManager } from 'typeorm';
 import { ApiErrorCode } from '../../common/errors/api-error-code.js';
 import { ApiError } from '../../common/errors/api-error.js';
 import { throwApiError } from '../../common/errors/throw-api-error.js';
+import { toPage, type Page } from '../../common/pagination/pagination.js';
 import type { MarketCode } from '../../markets/market-code.js';
 import type { DocumentScope } from '../../markets/market-pack.js';
 import { MarketRegistry } from '../../markets/market-registry.js';
@@ -12,6 +13,7 @@ import { StorageService } from '../../storage/storage.service.js';
 import type { AuthUser } from '../access/auth-user.js';
 import { hasMarketAccess, hasRole, isInternalOnMarket } from '../access/market-access.js';
 import { Role } from '../access/role.enum.js';
+import { auditInitial } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import { PurchaseAccessService } from '../purchases/purchase-access.service.js';
@@ -54,6 +56,8 @@ interface DocumentOwner {
   developerId: string | null;
   reportId: string | null;
 }
+
+export type DocumentListResponse = Page<DocumentResponse>;
 
 export function toDocumentResponse(document: Document): DocumentResponse {
   return {
@@ -111,7 +115,7 @@ export class DocumentsService {
     }
   }
 
-  async list(actor: AuthUser, query: ListDocumentsQueryDto): Promise<DocumentResponse[]> {
+  async list(actor: AuthUser, query: ListDocumentsQueryDto): Promise<DocumentListResponse> {
     const filter: DocumentOwnerFilter = {};
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -134,8 +138,8 @@ export class DocumentsService {
       } else {
         throw new ApiError(ApiErrorCode.InvalidRequest);
       }
-      const documents = await this.documents.list(queryRunner.manager, filter);
-      return documents.map(toDocumentResponse);
+      const [documents, total] = await this.documents.list(queryRunner.manager, filter, query);
+      return toPage(documents.map(toDocumentResponse), total, query);
     } catch (error) {
       throwApiError(error);
     } finally {
@@ -207,7 +211,16 @@ export class DocumentsService {
       action: 'document.uploaded',
       entityType: 'document',
       entityId: document.id,
-      data: { scope: owner.scope, typeCode, purchaseId: owner.purchaseId, projectId: owner.projectId },
+      data: {
+        scope: owner.scope,
+        typeCode,
+        purchaseId: owner.purchaseId,
+        projectId: owner.projectId,
+        developerId: owner.developerId,
+        reportId: owner.reportId,
+        // Samo naziv i vrsta fajla, nikad sadržaj.
+        changes: auditInitial(document, ['typeCode', 'fileName']),
+      },
     });
     return document;
   }

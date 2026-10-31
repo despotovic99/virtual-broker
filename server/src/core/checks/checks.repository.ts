@@ -42,8 +42,17 @@ export class ChecksRepository {
       .getMany();
   }
 
-  historyFor(manager: EntityManager, filter: { developerId?: string; projectId?: string }, limit: number): Promise<Check[]> {
-    return manager.getRepository(Check).find({ where: { ...filter }, order: { checkedAt: 'DESC' }, take: limit });
+  historyFor(
+    manager: EntityManager,
+    filter: { developerId?: string; projectId?: string },
+    page: { limit: number; offset: number },
+  ): Promise<[Check[], number]> {
+    return manager.getRepository(Check).findAndCount({
+      where: { ...filter },
+      order: { checkedAt: 'DESC', id: 'ASC' },
+      take: page.limit,
+      skip: page.offset,
+    });
   }
 
   /**

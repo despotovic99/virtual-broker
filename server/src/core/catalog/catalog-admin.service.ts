@@ -3,9 +3,11 @@ import { DataSource, type EntityManager } from 'typeorm';
 import { ApiErrorCode } from '../../common/errors/api-error-code.js';
 import { ApiError } from '../../common/errors/api-error.js';
 import { expectError, throwApiError } from '../../common/errors/throw-api-error.js';
+import { toPage, type Page } from '../../common/pagination/pagination.js';
 import { isUniqueViolation } from '../../common/utils/db-error.util.js';
 import type { AuthUser } from '../access/auth-user.js';
 import { assertMarketAccess } from '../access/market-access.js';
+import { auditChanges, auditInitial } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CatalogAdminRepository } from './catalog-admin.repository.js';
 import {
@@ -35,12 +37,8 @@ import type { Developer } from './entities/developer.entity.js';
 import type { Project } from './entities/project.entity.js';
 import type { Unit } from './entities/unit.entity.js';
 
-export interface ProjectListResponse {
-  items: ProjectResponse[];
-  total: number;
-  limit: number;
-  offset: number;
-}
+export type ProjectListResponse = Page<ProjectResponse>;
+export type DeveloperListResponse = Page<DeveloperResponse>;
 
 /**
  * Katalog (F-04, F-32): unos investitora, projekata, stanova i računa (naš
@@ -57,15 +55,20 @@ export class CatalogAdminService {
 
   // ---- Investitori ----
 
-  async listDevelopers(actor: AuthUser, query: ListDevelopersQueryDto): Promise<DeveloperResponse[]> {
+  async listDevelopers(actor: AuthUser, query: ListDevelopersQueryDto): Promise<DeveloperListResponse> {
     const markets = catalogStaffMarkets(actor).filter((market) => !query.market || market === query.market);
     if (markets.length === 0) throw new ApiError(ApiErrorCode.Forbidden);
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     try {
-      const developers = await this.catalog.listDevelopers(queryRunner.manager, markets, query.search?.trim() || undefined);
-      return developers.map(toDeveloperResponse);
+      const [developers, total] = await this.catalog.listDevelopers(
+        queryRunner.manager,
+        markets,
+        query.search?.trim() || undefined,
+        query,
+      );
+      return toPage(developers.map(toDeveloperResponse), total, query);
     } catch (error) {
       throwApiError(error);
     } finally {
@@ -109,7 +112,11 @@ export class CatalogAdminService {
         action: 'catalog.developer.created',
         entityType: 'developer',
         entityId: developer.id,
-        data: { name: developer.name, registrationNumber: developer.registrationNumber },
+        data: {
+          name: developer.name,
+          registrationNumber: developer.registrationNumber,
+          changes: auditInitial(developer, ['name', 'registrationNumber', 'taxNumber', 'address', 'website']),
+        },
       });
       await queryRunner.commitTransaction();
       return toDeveloperResponse(developer);
@@ -127,19 +134,19 @@ export class CatalogAdminService {
     await queryRunner.startTransaction();
     try {
       const existing = await this.loadDeveloperForUpdate(queryRunner.manager, actor, id);
-      const changes: Partial<Developer> = {};
-      if (dto.name !== undefined) changes.name = dto.name.trim();
-      if (dto.taxNumber !== undefined) changes.taxNumber = dto.taxNumber.trim() || null;
-      if (dto.address !== undefined) changes.address = dto.address.trim() || null;
-      if (dto.website !== undefined) changes.website = dto.website || null;
-      const developer = await this.catalog.updateDeveloper(queryRunner.manager, id, changes);
+      const patch: Partial<Developer> = {};
+      if (dto.name !== undefined) patch.name = dto.name.trim();
+      if (dto.taxNumber !== undefined) patch.taxNumber = dto.taxNumber.trim() || null;
+      if (dto.address !== undefined) patch.address = dto.address.trim() || null;
+      if (dto.website !== undefined) patch.website = dto.website || null;
+      const developer = await this.catalog.updateDeveloper(queryRunner.manager, id, patch);
       await this.audit.record(queryRunner.manager, {
         market: existing.market,
         actorId: actor.id,
         action: 'catalog.developer.updated',
         entityType: 'developer',
         entityId: id,
-        data: { fields: Object.keys(changes) },
+        data: { changes: auditChanges(existing, patch, ['name', 'taxNumber', 'address', 'website']) },
       });
       await queryRunner.commitTransaction();
       return toDeveloperResponse(developer);
@@ -193,7 +200,11 @@ export class CatalogAdminService {
         action: 'catalog.bank_account.added',
         entityType: 'developer_bank_account',
         entityId: account.id,
-        data: { developerId: developer.id, ibanLast4: account.iban.slice(-4) },
+        data: {
+          developerId: developer.id,
+          ibanLast4: account.iban.slice(-4),
+          changes: auditInitial(account, ['iban', 'bankName', 'holderName']),
+        },
       });
       await queryRunner.commitTransaction();
       return toBankAccountResponse(account, true);
@@ -223,7 +234,11 @@ export class CatalogAdminService {
         action: 'catalog.bank_account.verified',
         entityType: 'developer_bank_account',
         entityId: account.id,
-        data: { developerId: account.developerId, ibanLast4: account.iban.slice(-4) },
+        data: {
+          developerId: account.developerId,
+          ibanLast4: account.iban.slice(-4),
+          changes: auditChanges(account, verified, ['verifiedAt', 'verifiedById', 'verificationNote']),
+        },
       });
       await queryRunner.commitTransaction();
       return toBankAccountResponse(verified, true);
@@ -283,7 +298,11 @@ export class CatalogAdminService {
         action: 'catalog.project.created',
         entityType: 'project',
         entityId: project.id,
-        data: { developerId: developer.id, name: project.name },
+        data: {
+          developerId: developer.id,
+          name: project.name,
+          changes: auditInitial(project, ['name', 'city', 'address', 'parcelReference', 'description', 'expectedCompletion', 'status']),
+        },
       });
       await queryRunner.commitTransaction();
       return toProjectResponse(project);
@@ -301,22 +320,25 @@ export class CatalogAdminService {
     await queryRunner.startTransaction();
     try {
       const existing = await this.loadProjectForUpdate(queryRunner.manager, actor, id);
-      const changes: Partial<Project> = {};
-      if (dto.name !== undefined) changes.name = dto.name.trim();
-      if (dto.city !== undefined) changes.city = dto.city.trim();
-      if (dto.address !== undefined) changes.address = dto.address.trim();
-      if (dto.parcelReference !== undefined) changes.parcelReference = dto.parcelReference.trim() || null;
-      if (dto.description !== undefined) changes.description = dto.description.trim() || null;
-      if (dto.expectedCompletion !== undefined) changes.expectedCompletion = dto.expectedCompletion;
-      if (dto.status !== undefined) changes.status = dto.status;
-      const project = await this.catalog.updateProject(queryRunner.manager, id, changes);
+      const patch: Partial<Project> = {};
+      if (dto.name !== undefined) patch.name = dto.name.trim();
+      if (dto.city !== undefined) patch.city = dto.city.trim();
+      if (dto.address !== undefined) patch.address = dto.address.trim();
+      if (dto.parcelReference !== undefined) patch.parcelReference = dto.parcelReference.trim() || null;
+      if (dto.description !== undefined) patch.description = dto.description.trim() || null;
+      if (dto.expectedCompletion !== undefined) patch.expectedCompletion = dto.expectedCompletion;
+      if (dto.status !== undefined) patch.status = dto.status;
+      const project = await this.catalog.updateProject(queryRunner.manager, id, patch);
       await this.audit.record(queryRunner.manager, {
         market: existing.market,
         actorId: actor.id,
         action: dto.status && dto.status !== existing.status ? `catalog.project.${dto.status.toLowerCase()}` : 'catalog.project.updated',
         entityType: 'project',
         entityId: id,
-        data: { fields: Object.keys(changes), previousStatus: existing.status },
+        data: {
+          developerId: existing.developerId,
+          changes: auditChanges(existing, patch, ['name', 'city', 'address', 'parcelReference', 'description', 'expectedCompletion', 'status']),
+        },
       });
       await queryRunner.commitTransaction();
       return toProjectResponse(project);
@@ -352,7 +374,13 @@ export class CatalogAdminService {
         action: 'catalog.unit.created',
         entityType: 'unit',
         entityId: unit.id,
-        data: { projectId: project.id, label: unit.label, price: unit.price },
+        data: {
+          projectId: project.id,
+          developerId: project.developerId,
+          label: unit.label,
+          price: unit.price,
+          changes: auditInitial(unit, ['label', 'floor', 'rooms', 'area', 'price', 'status']),
+        },
       });
       await queryRunner.commitTransaction();
       return toUnitResponse(unit);
@@ -376,21 +404,27 @@ export class CatalogAdminService {
       if (dto.status !== undefined && (dto.status === 'RESERVED' || existing.status === 'RESERVED')) {
         throw new ApiError(ApiErrorCode.InvalidStateTransition);
       }
-      const changes: Partial<Unit> = {};
-      if (dto.label !== undefined) changes.label = dto.label.trim();
-      if (dto.floor !== undefined) changes.floor = dto.floor;
-      if (dto.rooms !== undefined) changes.rooms = dto.rooms;
-      if (dto.area !== undefined) changes.area = dto.area;
-      if (dto.price !== undefined) changes.price = dto.price;
-      if (dto.status !== undefined) changes.status = dto.status;
-      const unit = await this.catalog.updateUnit(queryRunner.manager, unitId, changes);
+      const patch: Partial<Unit> = {};
+      if (dto.label !== undefined) patch.label = dto.label.trim();
+      if (dto.floor !== undefined) patch.floor = dto.floor;
+      if (dto.rooms !== undefined) patch.rooms = dto.rooms;
+      if (dto.area !== undefined) patch.area = dto.area;
+      if (dto.price !== undefined) patch.price = dto.price;
+      if (dto.status !== undefined) patch.status = dto.status;
+      const unit = await this.catalog.updateUnit(queryRunner.manager, unitId, patch);
+      const developerId = await this.catalog.findProjectDeveloperId(queryRunner.manager, existing.projectId);
       await this.audit.record(queryRunner.manager, {
         market: existing.market,
         actorId: actor.id,
         action: 'catalog.unit.updated',
         entityType: 'unit',
         entityId: unitId,
-        data: { fields: Object.keys(changes), previousPrice: existing.price, previousStatus: existing.status },
+        data: {
+          projectId: existing.projectId,
+          developerId,
+          label: unit.label,
+          changes: auditChanges(existing, patch, ['label', 'floor', 'rooms', 'area', 'price', 'status']),
+        },
       });
       await queryRunner.commitTransaction();
       return toUnitResponse(unit);

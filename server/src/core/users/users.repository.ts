@@ -157,4 +157,32 @@ export class UsersRepository {
       .take(200)
       .getMany();
   }
+
+  /** Aktivni kupci za izbor pri otvaranju kupovine; pretraga po imenu, prezimenu ili email-u. */
+  findBuyers(manager: EntityManager, buyerRole: Role, search: string | undefined, limit: number, offset: number): Promise<[User[], number]> {
+    const query = manager
+      .getRepository(User)
+      .createQueryBuilder('u')
+      .where('u.isActive = true')
+      .andWhere('EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role = :role)', { role: buyerRole })
+      .orderBy('u.lastName', 'ASC')
+      .addOrderBy('u.firstName', 'ASC')
+      .addOrderBy('u.id', 'ASC')
+      .take(limit)
+      .skip(offset);
+    const term = search?.trim();
+    if (term) {
+      const pattern = likePattern(term);
+      query.andWhere(
+        new Brackets((where) => {
+          where
+            .where("LOWER(u.email) LIKE :pattern ESCAPE '\\'", { pattern })
+            .orWhere("LOWER(u.firstName) LIKE :pattern ESCAPE '\\'", { pattern })
+            .orWhere("LOWER(u.lastName) LIKE :pattern ESCAPE '\\'", { pattern })
+            .orWhere("LOWER(u.firstName || ' ' || u.lastName) LIKE :pattern ESCAPE '\\'", { pattern });
+        }),
+      );
+    }
+    return query.getManyAndCount();
+  }
 }

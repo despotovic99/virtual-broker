@@ -1,9 +1,9 @@
-import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { PaginationQueryDto } from '../../../common/pagination/pagination.js';
 import { MARKET_CODES, type MarketCode } from '../../../markets/market-code.js';
 import { ALL_ROLES, Role } from '../../access/role.enum.js';
 
-export class ListUsersQueryDto {
+export class ListUsersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn([...ALL_ROLES])
   role?: Role;
@@ -17,19 +17,6 @@ export class ListUsersQueryDto {
   @IsString()
   @MaxLength(100)
   search?: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  limit = 50;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset = 0;
 }
 
 /** Uloge koje se dodeljuju na kupovini (koordinator, inženjer, escrow, analitičar, advokat). */
@@ -41,4 +28,12 @@ export class StaffQueryDto {
 
   @IsIn([...MARKET_CODES])
   market: MarketCode;
+}
+
+/** Pretraga kupaca za otvaranje kupovine bez zahteva (ime, prezime ili email), po stranama. */
+export class BuyerSearchQueryDto extends PaginationQueryDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
 }

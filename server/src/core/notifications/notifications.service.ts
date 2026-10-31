@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { DataSource, type EntityManager } from 'typeorm';
 import { throwApiError } from '../../common/errors/throw-api-error.js';
+import { toPage, type Page, type PaginationQueryDto } from '../../common/pagination/pagination.js';
 import { EMAIL_SENDER, type EmailMessage, type EmailSender } from '../../integrations/dummy/dummy-email.sender.js';
 import { NotificationsRepository } from './notifications.repository.js';
 
@@ -22,6 +23,9 @@ export interface NotificationResponse {
   readAt: string | null;
   createdAt: string;
 }
+
+/** Strana obaveštenja i broj svih nepročitanih (za značku u zaglavlju). */
+export type NotificationListResponse = Page<NotificationResponse> & { unread: number };
 
 /**
  * Obaveštenja (F-19). `notify` učestvuje u tuđoj transakciji i vraća emailove
@@ -57,24 +61,22 @@ export class NotificationsService {
     }
   }
 
-  async listMine(userId: string, limit: number): Promise<{ items: NotificationResponse[]; unread: number }> {
+  async listMine(userId: string, query: PaginationQueryDto): Promise<NotificationListResponse> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     try {
-      const items = await this.notifications.listForUser(queryRunner.manager, userId, limit);
+      const [notifications, total] = await this.notifications.listForUser(queryRunner.manager, userId, query);
       const unread = await this.notifications.countUnread(queryRunner.manager, userId);
-      return {
-        unread,
-        items: items.map((item) => ({
-          id: item.id,
-          type: item.type,
-          title: item.title,
-          body: item.body,
-          link: item.link,
-          readAt: item.readAt ? item.readAt.toISOString() : null,
-          createdAt: item.createdAt.toISOString(),
-        })),
-      };
+      const items: NotificationResponse[] = notifications.map((item) => ({
+        id: item.id,
+        type: item.type,
+        title: item.title,
+        body: item.body,
+        link: item.link,
+        readAt: item.readAt ? item.readAt.toISOString() : null,
+        createdAt: item.createdAt.toISOString(),
+      }));
+      return { ...toPage(items, total, query), unread };
     } catch (error) {
       throwApiError(error);
     } finally {

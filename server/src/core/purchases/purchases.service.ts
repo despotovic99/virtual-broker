@@ -10,8 +10,10 @@ import { MarketRegistry } from '../../markets/market-registry.js';
 import type { AuthUser } from '../access/auth-user.js';
 import { hasRole, isInternalOnMarket } from '../access/market-access.js';
 import { MARKET_SCOPED_ROLES, Role } from '../access/role.enum.js';
+import { auditChanges } from '../audit/audit-changes.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
+import type { UnitStatus } from '../catalog/entities/unit.entity.js';
 import { ChecksService } from '../checks/checks.service.js';
 import { LegalTeamsService } from '../legal/legal-teams.service.js';
 import { NotificationsService, type NotificationDraft } from '../notifications/notifications.service.js';
@@ -77,13 +79,16 @@ export class PurchasesService {
     await queryRunner.startTransaction();
     try {
       const manager = queryRunner.manager;
-      const unit = await this.catalog.getUnit(manager, dto.unitId);
+      // Kupovina iz zahteva uzima kupca i stan iz zahteva (koordinator ih ne upisuje ručno).
+      const request = dto.requestId ? await this.requests.getForConversion(manager, dto.requestId) : null;
+      const unitId = dto.unitId ?? request?.unitId ?? null;
+      if (!unitId) throw new ApiError(ApiErrorCode.ValidationFailed, { fields: ['unitId'] });
+      const unit = await this.catalog.getUnit(manager, unitId);
       if (!isInternalOnMarket(actor, unit.market)) throw new ApiError(ApiErrorCode.MarketNotAllowed);
 
       let buyerId = dto.buyerId ?? null;
       let requestId: string | null = null;
-      if (dto.requestId) {
-        const request = await this.requests.getForConversion(manager, dto.requestId);
+      if (request) {
         if (request.market !== unit.market || (buyerId && buyerId !== request.buyerId)) {
           throw new ApiError(ApiErrorCode.InvalidRequest);
         }
@@ -101,6 +106,10 @@ export class PurchasesService {
       const developer = await this.catalog.getDeveloper(manager, project.developerId);
       const semaphore = await this.checks.projectSemaphore(manager, project, developer);
       if (semaphore.hardBlocked) throw new ApiError(ApiErrorCode.PurchaseHardBlocked);
+      // Siva obavezna provera ne sprečava otvaranje, ali se beleži ko je otvorio uprkos njoj.
+      const uncheckedMandatory = [...semaphore.developer.items, ...semaphore.project.items]
+        .filter((item) => item.mandatory && item.status === 'GRAY')
+        .map((item) => item.code);
 
       await this.catalog.reserveUnit(manager, unit.id);
 
@@ -120,7 +129,20 @@ export class PurchasesService {
         purchaseId,
         pack.journey.map((step, index) => ({ stepCode: step.code, phase: step.phase, position: index + 1 })),
       );
-      if (requestId) await this.requests.markConverted(manager, requestId, purchaseId);
+      if (request) {
+        await this.requests.markConverted(manager, request.id, purchaseId);
+        await this.audit.record(manager, {
+          market: request.market,
+          actorId: actor.id,
+          action: 'request.converted',
+          entityType: 'buyer_request',
+          entityId: request.id,
+          data: {
+            purchaseId,
+            changes: { status: { from: request.status, to: 'CONVERTED' }, purchaseId: { from: null, to: purchaseId } },
+          },
+        });
+      }
 
       await this.audit.record(manager, {
         market: unit.market,
@@ -128,8 +150,31 @@ export class PurchasesService {
         action: 'purchase.created',
         entityType: 'purchase',
         entityId: purchaseId,
-        data: { unitId: unit.id, projectId: project.id, buyerId, requestId, packVersion: pack.version },
+        data: {
+          unitId: unit.id,
+          projectId: project.id,
+          developerId: developer.id,
+          buyerId,
+          requestId,
+          packVersion: pack.version,
+          uncheckedMandatory,
+          changes: {
+            status: { from: null, to: 'ACTIVE' },
+            unitId: { from: null, to: unit.id },
+            buyerId: { from: null, to: buyerId },
+            ...(requestId ? { requestId: { from: null, to: requestId } } : {}),
+            ...(hasRole(actor, Role.Coordinator) ? { coordinatorId: { from: null, to: actor.id } } : {}),
+          },
+        },
       });
+      await this.recordUnitStatus(
+        manager,
+        actor.id,
+        { id: purchaseId, market: unit.market, unitId: unit.id, projectId: project.id, developerId: developer.id },
+        'reserved',
+        unit.status,
+        'RESERVED',
+      );
       emails = await this.notifications.notify(manager, [
         {
           userId: buyerId,
@@ -257,7 +302,10 @@ export class PurchasesService {
           action: 'purchase.assignments.updated',
           entityType: 'purchase',
           entityId: purchase.id,
-          data: Object.fromEntries(Object.entries(changes).map(([key, value]) => [key, value ?? null])),
+          data: {
+            purchaseId: purchase.id,
+            changes: auditChanges(purchase, changes, ['coordinatorId', 'legalTeamId', 'lawyerId', 'engineerId', 'escrowAgentId']),
+          },
         });
 
         const drafts: NotificationDraft[] = [];
@@ -337,13 +385,15 @@ export class PurchasesService {
       const manager = queryRunner.manager;
       const access = await this.access.getForUpdate(manager, purchaseId, actor);
       const { purchase } = access;
-      if (purchase.status !== 'ACTIVE') throw new ApiError(ApiErrorCode.InvalidStateTransition);
 
       const pack = this.markets.get(purchase.market);
       const definition = stepDefinition(pack, code);
       const steps = await this.purchases.findSteps(manager, purchase.id);
       const step = steps.find((candidate) => candidate.stepCode === code);
       if (!definition || !step) throw new ApiError(ApiErrorCode.NotFound);
+      // Aktivna kupovina: svi koraci. Završena: još samo opcioni koraci posle ključa (npr. garantni rok).
+      const stepAllowed = purchase.status === 'ACTIVE' || (purchase.status === 'COMPLETED' && definition.optional);
+      if (!stepAllowed) throw new ApiError(ApiErrorCode.InvalidStateTransition);
       if (step.status !== 'PENDING') throw new ApiError(ApiErrorCode.InvalidStateTransition);
       if (status === 'SKIPPED' && !definition.optional) throw new ApiError(ApiErrorCode.InvalidStateTransition);
 
@@ -375,12 +425,23 @@ export class PurchasesService {
         action: status === 'DONE' ? 'purchase.step.completed' : 'purchase.step.skipped',
         entityType: 'purchase',
         entityId: purchase.id,
-        data: { step: code, note },
+        data: {
+          purchaseId: purchase.id,
+          step: code,
+          note,
+          changes: {
+            [`step.${code}.status`]: { from: step.status, to: status },
+            ...(note ? { [`step.${code}.note`]: { from: step.note, to: note } } : {}),
+          },
+        },
       });
 
       const drafts: NotificationDraft[] = [];
-      const allFinished = steps.every((candidate) => candidate.id === step.id || candidate.status !== 'PENDING');
-      if (allFinished) {
+      // Kupovina je završena kad nijedan obavezan korak više ne čeka; opcioni (PDV, porez, garantni rok) mogu i posle.
+      const mandatoryPending = steps.some(
+        (candidate) => candidate.id !== step.id && candidate.status === 'PENDING' && !stepDefinition(pack, candidate.stepCode)?.optional,
+      );
+      if (purchase.status === 'ACTIVE' && !mandatoryPending) {
         await this.purchases.updatePurchase(manager, purchase.id, { status: 'COMPLETED', closedAt: now });
         await this.catalog.markUnitSold(manager, purchase.unitId);
         await this.audit.record(manager, {
@@ -389,13 +450,17 @@ export class PurchasesService {
           action: 'purchase.completed',
           entityType: 'purchase',
           entityId: purchase.id,
-          data: null,
+          data: {
+            purchaseId: purchase.id,
+            changes: auditChanges(purchase, { status: 'COMPLETED', closedAt: now }, ['status', 'closedAt']),
+          },
         });
+        await this.recordUnitStatus(manager, actor.id, purchase, 'sold', 'RESERVED', 'SOLD');
         drafts.push({
           userId: purchase.buyerId,
           type: 'purchase.completed',
           title: 'Kupovina je završena',
-          body: 'Svi koraci kupovine su završeni.',
+          body: 'Svi obavezni koraci kupovine su završeni. Opcioni koraci posle ključa ostaju otvoreni dok se ne završe ili preskoče.',
           link: link(purchase.id),
         });
       } else if (purchase.buyerId !== actor.id) {
@@ -451,16 +516,21 @@ export class PurchasesService {
       const { purchase } = access;
       const now = new Date();
 
+      let patch: Partial<Purchase>;
       if (action === 'block') {
         if (purchase.status !== 'ACTIVE') throw new ApiError(ApiErrorCode.InvalidStateTransition);
-        await this.purchases.updatePurchase(manager, purchase.id, { status: 'BLOCKED', blockReason: reason });
+        patch = { status: 'BLOCKED', blockReason: reason };
+        await this.purchases.updatePurchase(manager, purchase.id, patch);
       } else if (action === 'unblock') {
         if (purchase.status !== 'BLOCKED') throw new ApiError(ApiErrorCode.InvalidStateTransition);
-        await this.purchases.updatePurchase(manager, purchase.id, { status: 'ACTIVE', blockReason: null });
+        patch = { status: 'ACTIVE', blockReason: null };
+        await this.purchases.updatePurchase(manager, purchase.id, patch);
       } else {
         if (purchase.status !== 'ACTIVE' && purchase.status !== 'BLOCKED') throw new ApiError(ApiErrorCode.InvalidStateTransition);
-        await this.purchases.updatePurchase(manager, purchase.id, { status: 'CANCELLED', closedAt: now });
+        patch = { status: 'CANCELLED', closedAt: now };
+        await this.purchases.updatePurchase(manager, purchase.id, patch);
         await this.catalog.releaseUnit(manager, purchase.unitId);
+        await this.recordUnitStatus(manager, actor.id, purchase, 'released', 'RESERVED', 'AVAILABLE');
       }
 
       await this.audit.record(manager, {
@@ -469,7 +539,11 @@ export class PurchasesService {
         action: `purchase.${action}`,
         entityType: 'purchase',
         entityId: purchase.id,
-        data: reason ? { reason } : null,
+        data: {
+          purchaseId: purchase.id,
+          ...(reason ? { reason } : {}),
+          changes: auditChanges(purchase, patch, ['status', 'blockReason', 'closedAt']),
+        },
       });
       const titles = { block: 'Kupovina je zaustavljena', unblock: 'Kupovina se nastavlja', cancel: 'Kupovina je otkazana' };
       emails = await this.notifications.notify(manager, [
@@ -501,6 +575,33 @@ export class PurchasesService {
   }
 
   /** Dodeljeni korisnik mora biti aktivan, imati ulogu i raditi na tržištu kupovine. */
+  /**
+   * Trag promene statusa stana koju radi kupovina (rezervacija, prodaja,
+   * oslobađanje). Vidi se u istoriji stana, projekta, investitora i kupovine.
+   */
+  private recordUnitStatus(
+    manager: EntityManager,
+    actorId: string,
+    purchase: Pick<Purchase, 'id' | 'market' | 'unitId' | 'projectId' | 'developerId'>,
+    action: 'reserved' | 'sold' | 'released',
+    from: UnitStatus,
+    to: UnitStatus,
+  ): Promise<void> {
+    return this.audit.record(manager, {
+      market: purchase.market,
+      actorId,
+      action: `catalog.unit.${action}`,
+      entityType: 'unit',
+      entityId: purchase.unitId,
+      data: {
+        purchaseId: purchase.id,
+        projectId: purchase.projectId,
+        developerId: purchase.developerId,
+        changes: { status: { from, to } },
+      },
+    });
+  }
+
   private async assertStaff(manager: EntityManager, userId: string, role: Role, market: MarketCode, field: string): Promise<void> {
     const user = await this.users.findActiveByIdWithRoles(manager, userId);
     const ok =

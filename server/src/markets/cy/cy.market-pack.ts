@@ -46,8 +46,8 @@ export const cyMarketPack: MarketPack = {
 
   checks: [
     // Developer (F-05)
-    { code: 'CY_REGISTRAR_STATUS', subject: 'DEVELOPER', title: { sr: 'Status firme (Registrar of Companies)', en: 'Company status (Registrar of Companies)' }, mandatory: true, method: 'AUTOMATIC', validityDays: 30, integration: IntegrationKey.CyRegistrarCompany, inFreeSemaphore: true },
-    { code: 'CY_INSOLVENCY', subject: 'DEVELOPER', title: { sr: 'Registar likvidacija', en: 'Liquidation register' }, mandatory: true, method: 'AUTOMATIC', validityDays: 7, integration: IntegrationKey.CyInsolvency, inFreeSemaphore: true },
+    { code: 'CY_REGISTRAR_STATUS', subject: 'DEVELOPER', title: { sr: 'Status firme (Registrar of Companies)', en: 'Company status (Registrar of Companies)' }, mandatory: true, method: 'AUTOMATIC', validityDays: 30, integration: IntegrationKey.CyRegistrarCompany, inFreeSemaphore: true, hardBlockOnRed: true },
+    { code: 'CY_INSOLVENCY', subject: 'DEVELOPER', title: { sr: 'Registar likvidacija', en: 'Liquidation register' }, mandatory: true, method: 'AUTOMATIC', validityDays: 7, integration: IntegrationKey.CyInsolvency, inFreeSemaphore: true, hardBlockOnRed: true },
     { code: 'CY_COURT_CASES', subject: 'DEVELOPER', title: { sr: 'Sudski sporovi (pretraga advokata)', en: 'Court cases (lawyer search)' }, mandatory: false, method: 'LAWYER', validityDays: 90, inFreeSemaphore: false },
     { code: 'CY_TITLE_TRACK_RECORD', subject: 'DEVELOPER', title: { sr: 'Istorija title deed-ova u ranijim projektima', en: 'Title deed track record' }, mandatory: false, method: 'MANUAL', validityDays: 365, inFreeSemaphore: false },
     // Projekat (F-06)

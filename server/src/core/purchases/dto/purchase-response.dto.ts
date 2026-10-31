@@ -1,3 +1,4 @@
+import type { Page } from '../../../common/pagination/pagination.js';
 import type { MarketCode } from '../../../markets/market-code.js';
 import type { JourneyPhase, Localized, MoneyModel } from '../../../markets/market-pack.js';
 import type { Role } from '../../access/role.enum.js';
@@ -62,12 +63,8 @@ export interface PurchaseDetailDto extends PurchaseSummaryDto {
   myRelations: PurchaseRelation[];
 }
 
-export interface PurchaseListDto {
-  items: PurchaseSummaryDto[];
-  total: number;
-  limit: number;
-  offset: number;
-}
+export type PurchaseListDto = Page<PurchaseSummaryDto>;
+export type PurchaseTaskListDto = Page<PurchaseTaskDto>;
 
 export interface PurchaseTaskDto {
   id: string;
